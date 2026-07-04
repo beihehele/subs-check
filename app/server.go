@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beck-8/subs-check/check"
-	"github.com/beck-8/subs-check/config"
-	"github.com/beck-8/subs-check/save/method"
+	"github.com/beihehele/subs-check/check"
+	"github.com/beihehele/subs-check/config"
+	"github.com/beihehele/subs-check/save/method"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"

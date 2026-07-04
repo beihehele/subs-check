@@ -3,7 +3,7 @@ package method
 import (
 	"testing"
 
-	"github.com/beck-8/subs-check/config"
+	"github.com/beihehele/subs-check/config"
 )
 
 func TestUploadToS3(t *testing.T) {

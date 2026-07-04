@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beck-8/subs-check/config"
-	"github.com/beck-8/subs-check/utils"
+	"github.com/beihehele/subs-check/config"
+	"github.com/beihehele/subs-check/utils"
 	"github.com/metacubex/mihomo/common/convert"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/samber/lo"

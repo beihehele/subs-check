@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/beck-8/subs-check/config"
-	proxyutils "github.com/beck-8/subs-check/proxy"
+	"github.com/beihehele/subs-check/config"
+	proxyutils "github.com/beihehele/subs-check/proxy"
 )
 
 // RenderName 根据 Result 的结构化字段构造展示名。

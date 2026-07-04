@@ -10,12 +10,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/beck-8/subs-check/app/monitor"
-	"github.com/beck-8/subs-check/assets"
-	"github.com/beck-8/subs-check/check"
-	"github.com/beck-8/subs-check/config"
-	"github.com/beck-8/subs-check/save"
-	"github.com/beck-8/subs-check/utils"
+	"github.com/beihehele/subs-check/app/monitor"
+	"github.com/beihehele/subs-check/assets"
+	"github.com/beihehele/subs-check/check"
+	"github.com/beihehele/subs-check/config"
+	"github.com/beihehele/subs-check/save"
+	"github.com/beihehele/subs-check/utils"
 	"github.com/fsnotify/fsnotify"
 	"github.com/robfig/cron/v3"
 )

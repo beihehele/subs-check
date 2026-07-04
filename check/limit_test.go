@@ -3,7 +3,7 @@ package check
 import (
 	"testing"
 
-	"github.com/beck-8/subs-check/config"
+	"github.com/beihehele/subs-check/config"
 )
 
 func resultWith(country string, speed, latency, idx int) Result {
