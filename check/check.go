@@ -40,11 +40,13 @@ type Result struct {
 	IPRisk     string
 	Country    string
 	Speed      int // KB/s, 0 表示未测速或测速未通过
+	Latency    int // ms, 测活请求耗时
 }
 
 // aliveResult 存活检测通过的中间结果
 type aliveResult struct {
-	Proxy map[string]any
+	Proxy   map[string]any
+	Latency int
 }
 
 // ProxyChecker 处理代理检测的主要结构体
@@ -199,9 +201,8 @@ func Check() ([]Result, error) {
 }
 
 // run drives the 4-stage pipeline: dispatch → alive → media+filter → speed → collect.
-// Stages run concurrently, connected by channels. SuccessLimit cancels the whole
-// pipeline as soon as the collector has gathered N passing items; in-flight work
-// is drained and un-dispatched items are discarded.
+// Stages run concurrently, connected by channels. SuccessLimit is applied after
+// the full pipeline finishes (region grouping + trim in ApplySuccessLimit).
 func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 	if config.GlobalConfig.TotalSpeedLimit != 0 {
 		Bucket = ratelimit.NewBucketWithRate(float64(config.GlobalConfig.TotalSpeedLimit*1024*1024), int64(config.GlobalConfig.TotalSpeedLimit*1024*1024/10))
@@ -283,28 +284,17 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 	}
 
 	// Collector: place items in pre-allocated slots to preserve subscription order.
-	// The SuccessLimit hit notice is *not* logged here: emitting slog output
-	// mid-render interleaves with the progress writer and breaks cursor-up
-	// positioning. We remember whether we tripped the limit and log it after
-	// pauseProgress has parked the renderer.
 	out := make([]*Result, total)
 	var finalPassed int32
-	limitHit := false
 	for item := range collectIn {
 		r := item.r
 		out[item.idx] = &r
 		finalPassed++
-		if config.GlobalConfig.SuccessLimit > 0 && finalPassed >= config.GlobalConfig.SuccessLimit && !limitHit {
-			limitHit = true
-			cancel()
-		}
 	}
 
 	pauseProgress()
 
-	if limitHit {
-		slog.Warn(fmt.Sprintf("达到成功数量限制: %d，已停止流水线", config.GlobalConfig.SuccessLimit))
-	} else if ctx.Err() != nil {
+	if ctx.Err() != nil {
 		// External cancel (RequestCancel via SIGHUP / HTTP force-close).
 		// Logged here rather than in RequestCancel because emitting it
 		// while the progress renderer is still drawing would let the
@@ -330,6 +320,7 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 			pc.results = append(pc.results, *r)
 		}
 	}
+	pc.results = ApplySuccessLimit(pc.results)
 
 	if config.GlobalConfig.PrintProgress {
 		done <- true
@@ -377,8 +368,8 @@ type pipelineItem struct {
 // restore original subscription order before emitting the final slice.
 //
 // Cancellation: a single context.Context covers the entire pipeline.
-// SuccessLimit causes the collector to cancel it once N passes have been
-// gathered; goroutines then drain their inputs and exit.
+// RequestCancel can abort an in-flight run; SuccessLimit is applied only
+// after all stages finish (see ApplySuccessLimit).
 
 // pipelineDispatch feeds proxies into the alive stage. By default it dispatches
 // in subscription order; with shuffle-test-order on, it dispatches in a random
@@ -495,7 +486,7 @@ func (pc *ProxyChecker) startMediaWorkers(
 // unconditionally so an item classified as "good" is never dropped at
 // the final hop, even if cancel fires between SpeedOk.Add and the send.
 // ctx.Err is only checked at the top of the loop to avoid starting a
-// fresh ~10s speed test once we've already tripped SuccessLimit.
+// fresh ~10s speed test once cancel has fired.
 //
 // speedTestURL is passed through (captured at pipeline start) so the
 // run stays self-consistent even if the user edits SpeedTestUrl in
@@ -535,12 +526,14 @@ func (pc *ProxyChecker) checkAlive(proxy map[string]any) *aliveResult {
 	}
 	defer httpClient.Close()
 
+	start := time.Now()
 	alive, err := platform.CheckAlive(httpClient.Client)
+	latency := int(time.Since(start).Milliseconds())
 	if err != nil || !alive {
 		return nil
 	}
 
-	return &aliveResult{Proxy: proxy}
+	return &aliveResult{Proxy: proxy, Latency: latency}
 }
 
 // checkSpeed 对已有的 Result 执行测速。
@@ -573,7 +566,7 @@ func (pc *ProxyChecker) checkSpeed(r Result, speedTestURL string) *Result {
 // 不会丢弃节点,不会修改 proxy["name"];检测结果写入 Result 的结构化字段。
 // Counter updates are owned by the caller (media pipeline worker).
 func (pc *ProxyChecker) checkMedia(a aliveResult) *Result {
-	res := &Result{Proxy: a.Proxy}
+	res := &Result{Proxy: a.Proxy, Latency: a.Latency}
 
 	if os.Getenv("SUB_CHECK_SKIP") != "" {
 		return res

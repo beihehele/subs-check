@@ -97,7 +97,6 @@ func (pc *ProxyChecker) showProgressLog(done chan bool) {
 // line) so varying-width numbers don't leave stale chars.
 func (pc *ProxyChecker) renderFrame() int {
 	hasSpeed := config.GlobalConfig.SpeedTestUrl != ""
-	limit := config.GlobalConfig.SuccessLimit
 
 	aliveTotal := ProxyCount.Load()
 	aliveDone := Progress.Load()
@@ -106,20 +105,16 @@ func (pc *ProxyChecker) renderFrame() int {
 	filterPass := FilterPassed.Load()
 
 	if !hasSpeed {
-		// Media is the last stage; its filter-pass count is the final result
-		// so the limit marker also lives on this line.
-		limitHit := limit > 0 && int32(filterPass) >= limit
 		fmt.Printf("\x1b[2K\r%s\n", formatStageLine("测活", aliveDone, aliveTotal, "存活", aliveOk, false))
-		fmt.Printf("\x1b[2K\r%s\n", formatStageLine("媒体", mediaDone, aliveOk, "通过", filterPass, limitHit))
+		fmt.Printf("\x1b[2K\r%s\n", formatStageLine("媒体", mediaDone, aliveOk, "通过", filterPass, false))
 		return 2
 	}
 
 	speedDone := SpeedDone.Load()
 	speedOk := SpeedOk.Load()
-	limitHit := limit > 0 && int32(speedOk) >= limit
 	fmt.Printf("\x1b[2K\r%s\n", formatStageLine("测活", aliveDone, aliveTotal, "存活", aliveOk, false))
 	fmt.Printf("\x1b[2K\r%s\n", formatStageLine("媒体", mediaDone, aliveOk, "通过", filterPass, false))
-	fmt.Printf("\x1b[2K\r%s\n", formatStageLine("测速", speedDone, filterPass, "通过", speedOk, limitHit))
+	fmt.Printf("\x1b[2K\r%s\n", formatStageLine("测速", speedDone, filterPass, "通过", speedOk, false))
 	return 3
 }
 

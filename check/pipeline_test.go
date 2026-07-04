@@ -66,30 +66,18 @@ func TestPipeline_PreservesOrder(t *testing.T) {
 	})
 }
 
-// TestPipeline_HonorsSuccessLimit verifies that cancel halts the
-// dispatcher once SuccessLimit items have been gathered. Cancellation
-// policy is asymmetric:
-//   - middle stages use a ctx-aware select on send, so queued items and
-//     select-race losers are dropped to avoid wasted downstream work
-//   - the speed→collector send is unconditional, so items already
-//     classified as passing the speed test never get thrown away
-//
-// Overshoot bound reflects that asymmetry: up to cap(collectIn) items
-// may have been queued for the collector when cancel fired, and each
-// speed worker in flight may send one more item (unconditional). That
-// gives a ceiling around limit + 2*speed-concurrent, loose enough to
-// stay robust against Go's random select scheduling.
+// TestPipeline_HonorsSuccessLimit verifies the full pipeline runs to completion
+// and ApplySuccessLimit trims the post-check output (all stubs share OTHER).
 func TestPipeline_HonorsSuccessLimit(t *testing.T) {
 	t.Setenv("SUB_CHECK_SKIP", "1")
 	const (
-		input  = 2000
-		limit  = 10
-		speedC = 10
+		input = 2000
+		limit = 10
 	)
 	withConfig(t, config.Config{
 		Concurrent:      50,
 		MediaConcurrent: 20,
-		SpeedConcurrent: speedC,
+		SpeedConcurrent: 10,
 		SpeedTestUrl:    "http://example.invalid/dl",
 		SuccessLimit:    limit,
 		MinSpeed:        0,
@@ -101,14 +89,11 @@ func TestPipeline_HonorsSuccessLimit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run returned error: %v", err)
 		}
-		if len(results) < limit {
-			t.Fatalf("expected at least %d results, got %d", limit, len(results))
+		if len(results) != limit {
+			t.Fatalf("expected exactly %d trimmed results, got %d", limit, len(results))
 		}
-		if max := limit + 2*speedC; len(results) > max {
-			t.Fatalf("expected at most %d results (overshoot window), got %d", max, len(results))
-		}
-		if alive := int(Progress.Load()); alive >= input {
-			t.Fatalf("cancellation did not stop dispatch: aliveDone=%d (input=%d)", alive, input)
+		if alive := int(Progress.Load()); alive != input {
+			t.Fatalf("expected full pipeline run aliveDone=%d, got %d", input, alive)
 		}
 	})
 }
