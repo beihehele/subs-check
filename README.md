@@ -3,7 +3,6 @@
 <p align="center">
 	<a href="https://github.com/beck-8/subs-check/releases"><img src="https://img.shields.io/github/v/release/beck-8/subs-check?style=flat-square&include_prereleases&label=version" /></a>
 	<a href="https://github.com/beck-8/subs-check/releases"><img src="https://img.shields.io/github/downloads/beck-8/subs-check/total.svg?style=flat-square" /></a>
-  <a href="https://hub.docker.com/r/beck8/subs-check/tags"><img src="https://img.shields.io/docker/pulls/beck8/subs-check" /></a>
 	<a href="https://github.com/beck-8/subs-check/issues"><img src="https://img.shields.io/github/issues-raw/beck-8/subs-check.svg?style=flat-square&label=issues" /></a>
 	<a href="https://github.com/beck-8/subs-check/graphs/contributors"><img src="https://img.shields.io/github/contributors/beck-8/subs-check?style=flat-square" /></a>
 	<a href="https://github.com/beck-8/subs-check/blob/master/LICENSE"><img src="https://img.shields.io/github/license/beck-8/subs-check?style=flat-square" /></a>
@@ -42,51 +41,23 @@
 - **🖥️ 多平台支持**
 
 ## 🛠️ 部署与使用 
-> 首次运行会在当前目录生成默认配置文件。
+> 首次运行会在当前目录生成默认配置文件。  
+> 发布 tag（如 `v1.0.0`）后，镜像会自动推送到 `ghcr.io/<owner>/subs-check`。
 
 ### 🚀 一键安装（Linux）
 
+使用 GHCR 镜像 + systemd（请将 `OWNER` 替换为你的 GitHub 用户名或组织名）：
+
 ```bash
-# 默认安装
-bash <(curl -fsSL https://raw.githubusercontent.com/beck-8/subs-check/master/install.sh)
-
-# 使用 wget
-bash <(wget -qO- https://raw.githubusercontent.com/beck-8/subs-check/master/install.sh)
-
-# 如果无法访问 GitHub，可使用代理
-bash <(curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/beck-8/subs-check/master/install.sh) https://ghfast.top/
-
-# Alpine 等无 bash 环境
-wget -qO /tmp/install.sh https://raw.githubusercontent.com/beck-8/subs-check/master/install.sh && sh /tmp/install.sh && rm -f /tmp/install.sh
+mkdir -p /opt/subs-check/{config,output}
+docker pull ghcr.io/OWNER/subs-check:latest
+# 参考下方 Docker 运行命令启动，或使用 docker compose
 ```
 
 <details>
-  <summary>脚本说明</summary>
+  <summary>旧版二进制安装脚本（已停用）</summary>
 
-安装脚本会自动执行以下操作：
-1. 检测系统架构（x86_64 / aarch64 / armv7 / i386）
-2. 从 GitHub Releases 下载最新版本
-3. 安装到 `/opt/subs-check` 目录
-4. 配置 systemd 服务
-5. 交互式选择是否开机自启动
-6. 交互式选择是否立即启动
-
-**服务管理：**
-```bash
-systemctl start subs-check    # 启动
-systemctl stop subs-check     # 停止
-systemctl restart subs-check  # 重启
-systemctl status subs-check   # 状态
-journalctl -u subs-check -f   # 日志
-```
-
-**卸载方法：**
-```bash
-systemctl stop subs-check
-systemctl disable subs-check
-rm -rf /opt/subs-check /etc/systemd/system/subs-check.service
-systemctl daemon-reload
-```
+此前通过 GitHub Releases 分发二进制；当前仅发布 GHCR 镜像，请改用 Docker 部署。
 
 </details>
 
@@ -188,9 +159,6 @@ services:
     restart: always
     network_mode: bridge
 ```
-### 📦 二进制文件运行
-
-下载 [Releases](https://github.com/beck-8/subs-check/releases) 中适合的版本，解压后直接运行即可。
 
 ### 🖥️ 源码运行
 
