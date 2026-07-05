@@ -37,16 +37,25 @@ func GetProxies() ([]map[string]any, error) {
 	if config.GlobalConfig.DeadSubDays > 0 {
 		active := make([]subEntry, 0, len(subUrls))
 		skipped := 0
+		recheck := 0
 		for _, e := range subUrls {
-			if substats.IsDead(utils.WarpUrl(e.url)) {
+			url := utils.WarpUrl(e.url)
+			if substats.IsDead(url) {
 				skipped++
 				continue
+			}
+			if substats.IsRecheckDue(url) {
+				recheck++
 			}
 			active = append(active, e)
 		}
 		if skipped > 0 {
 			slog.Warn(fmt.Sprintf("已跳过 %d 个失效订阅（连续 %d 天无可用节点，详见 output/dead-subs.txt）",
 				skipped, config.GlobalConfig.DeadSubDays))
+		}
+		if recheck > 0 {
+			slog.Info(fmt.Sprintf("失效订阅抽检: %d 个（每 %d 天复检一次）",
+				recheck, config.GlobalConfig.DeadSubRecheckDays))
 		}
 		subUrls = active
 	}

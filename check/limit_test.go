@@ -15,6 +15,42 @@ func resultWith(country string, speed, latency, idx int) Result {
 	}
 }
 
+func TestSortResultsByRegion_ContiguousBlocks(t *testing.T) {
+	in := []Result{
+		resultWith("JP", 100, 0, 0),
+		resultWith("HK", 200, 0, 1),
+		resultWith("US", 300, 0, 2),
+		resultWith("HK", 150, 0, 3),
+	}
+	got := SortResultsByRegion(in)
+	blockKeys := make([]string, 0)
+	for _, r := range got {
+		k := regionKey(r)
+		if len(blockKeys) == 0 || blockKeys[len(blockKeys)-1] != k {
+			blockKeys = append(blockKeys, k)
+		}
+	}
+	for i := 1; i < len(blockKeys); i++ {
+		if compareRegionKeys(blockKeys[i], blockKeys[i-1]) < 0 {
+			t.Fatalf("region blocks interleaved: %v", blockKeys)
+		}
+	}
+	if blockKeys[0] != "HK" {
+		t.Fatalf("expected HK first, got %v", blockKeys)
+	}
+}
+
+func TestSortResultsByRegion_OtherLast(t *testing.T) {
+	in := []Result{
+		{Proxy: map[string]any{"name": "unknown-1"}},
+		resultWith("HK", 100, 0, 1),
+	}
+	got := SortResultsByRegion(in)
+	if regionKey(got[len(got)-1]) != regionOther {
+		t.Fatalf("expected OTHER last, got %q", regionKey(got[len(got)-1]))
+	}
+}
+
 func TestApplySuccessLimit_ZeroKeepsAllGrouped(t *testing.T) {
 	withConfig(t, config.Config{
 		SpeedTestUrl: "http://example.invalid/dl",

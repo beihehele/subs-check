@@ -30,31 +30,59 @@ type Stat struct {
 	FirstCheckAt  time.Time `json:"firstCheckAt"`
 	LastCheckAt   time.Time `json:"lastCheckAt"`
 	LastSuccessAt time.Time `json:"lastSuccessAt,omitempty"`
+	LastRecheckAt time.Time `json:"lastRecheckAt,omitempty"`
 	LastSuccess   int       `json:"lastSuccess"`
 	LastTotal     int       `json:"lastTotal"`
 }
 
+// Entry is a subscription row for the admin API.
+type Entry struct {
+	URL           string `json:"url"`
+	LastSuccess   int    `json:"lastSuccess"`
+	LastTotal     int    `json:"lastTotal"`
+	LastCheckAt   string `json:"lastCheckAt,omitempty"`
+	LastSuccessAt string `json:"lastSuccessAt,omitempty"`
+	LastRecheckAt string `json:"lastRecheckAt,omitempty"`
+	Status        string `json:"status"`
+}
+
+// Snapshot is returned by the admin API.
+type Snapshot struct {
+	DeadSubDays        int     `json:"deadSubDays"`
+	DeadSubRecheckDays int     `json:"deadSubRecheckDays"`
+	Entries            []Entry `json:"entries"`
+}
+
 type statsStore map[string]Stat
 
-// IsDead reports whether url has had no successful nodes for dead-sub-days.
+const (
+	statusActive       = "active"
+	statusDead         = "dead"
+	statusRecheckDue   = "recheck_due"
+	statusNeverChecked = "never_checked"
+)
+
+// IsDead reports whether url should be skipped this run.
 func IsDead(url string) bool {
-	days := config.GlobalConfig.DeadSubDays
-	if days <= 0 || url == "" {
-		return false
-	}
-	outputPath, ok := getOutputPath()
+	entry, ok := loadEntry(url)
 	if !ok {
 		return false
 	}
-	store, err := loadStats(outputPath)
-	if err != nil {
+	return shouldSkip(entry, time.Now())
+}
+
+// IsRecheckDue reports whether a dead subscription is being spot-checked this run.
+func IsRecheckDue(url string) bool {
+	entry, ok := loadEntry(url)
+	if !ok {
 		return false
 	}
-	entry, exists := store[url]
-	if !exists {
+	now := time.Now()
+	deadDays := config.GlobalConfig.DeadSubDays
+	if deadDays <= 0 || !isDeadSub(entry, now, deadDays) {
 		return false
 	}
-	return isDeadSub(entry, time.Now(), days)
+	return !shouldSkip(entry, now)
 }
 
 // Track updates persistent stats and refreshes dead-subs.txt.
@@ -75,18 +103,30 @@ func Track(checkStats map[string]CheckStat) {
 	}
 
 	now := time.Now()
+	deadDays := config.GlobalConfig.DeadSubDays
 	withSuccess := 0
+	rechecked := 0
+	revived := 0
+
 	for url, stats := range checkStats {
 		entry := store[url]
+		wasDead := deadDays > 0 && isDeadSub(entry, now, deadDays)
 		if entry.FirstCheckAt.IsZero() {
 			entry.FirstCheckAt = now
 		}
 		entry.LastCheckAt = now
 		entry.LastTotal = stats.Total
 		entry.LastSuccess = stats.Success
+		if wasDead {
+			entry.LastRecheckAt = now
+			rechecked++
+		}
 		if stats.Success > 0 {
 			entry.LastSuccessAt = now
 			withSuccess++
+			if wasDead {
+				revived++
+			}
 		}
 		store[url] = entry
 
@@ -104,8 +144,12 @@ func Track(checkStats map[string]CheckStat) {
 		"订阅检测汇总: %d 个链接, %d 个有可用节点, %d 个无可用节点",
 		len(checkStats), withSuccess, len(checkStats)-withSuccess,
 	))
+	if rechecked > 0 {
+		slog.Info(fmt.Sprintf("失效订阅抽检: %d 个", rechecked),
+			"恢复可用", revived,
+		)
+	}
 
-	deadDays := config.GlobalConfig.DeadSubDays
 	if deadDays <= 0 {
 		return
 	}
@@ -121,6 +165,121 @@ func Track(checkStats map[string]CheckStat) {
 			len(dead), deadDays, filepath.Join(outputPath, deadFile),
 		))
 	}
+}
+
+// LoadSnapshot builds the admin/API view for all known subscription URLs.
+func LoadSnapshot(urls []string) Snapshot {
+	snap := Snapshot{
+		DeadSubDays:        config.GlobalConfig.DeadSubDays,
+		DeadSubRecheckDays: config.GlobalConfig.DeadSubRecheckDays,
+		Entries:            make([]Entry, 0),
+	}
+
+	outputPath, ok := getOutputPath()
+	if !ok {
+		return snap
+	}
+
+	store, err := loadStats(outputPath)
+	if err != nil {
+		slog.Warn(fmt.Sprintf("读取订阅统计失败: %v", err))
+		store = make(statsStore)
+	}
+
+	now := time.Now()
+	seen := make(map[string]struct{}, len(urls))
+	for _, raw := range urls {
+		url := strings.TrimSpace(raw)
+		if url == "" {
+			continue
+		}
+		seen[url] = struct{}{}
+		snap.Entries = append(snap.Entries, buildEntry(url, store[url], now))
+	}
+
+	for url, stat := range store {
+		if _, ok := seen[url]; ok {
+			continue
+		}
+		snap.Entries = append(snap.Entries, buildEntry(url, stat, now))
+	}
+
+	sort.Slice(snap.Entries, func(i, j int) bool {
+		if snap.Entries[i].Status != snap.Entries[j].Status {
+			return snap.Entries[i].Status < snap.Entries[j].Status
+		}
+		return snap.Entries[i].URL < snap.Entries[j].URL
+	})
+	return snap
+}
+
+func buildEntry(url string, stat Stat, now time.Time) Entry {
+	entry := Entry{
+		URL:         url,
+		LastSuccess: stat.LastSuccess,
+		LastTotal:   stat.LastTotal,
+		Status:      statusNeverChecked,
+	}
+	if stat.LastCheckAt.IsZero() {
+		return entry
+	}
+	entry.LastCheckAt = stat.LastCheckAt.Format(time.RFC3339)
+	if !stat.LastSuccessAt.IsZero() {
+		entry.LastSuccessAt = stat.LastSuccessAt.Format(time.RFC3339)
+	}
+	if !stat.LastRecheckAt.IsZero() {
+		entry.LastRecheckAt = stat.LastRecheckAt.Format(time.RFC3339)
+	}
+	entry.Status = entryStatus(stat, now)
+	return entry
+}
+
+func entryStatus(stat Stat, now time.Time) string {
+	if stat.LastCheckAt.IsZero() {
+		return statusNeverChecked
+	}
+	deadDays := config.GlobalConfig.DeadSubDays
+	if deadDays <= 0 || !isDeadSub(stat, now, deadDays) {
+		return statusActive
+	}
+	if shouldSkip(stat, now) {
+		return statusDead
+	}
+	return statusRecheckDue
+}
+
+func shouldSkip(stat Stat, now time.Time) bool {
+	deadDays := config.GlobalConfig.DeadSubDays
+	if deadDays <= 0 {
+		return false
+	}
+	if !isDeadSub(stat, now, deadDays) {
+		return false
+	}
+	recheckDays := config.GlobalConfig.DeadSubRecheckDays
+	if recheckDays <= 0 {
+		return true
+	}
+	if stat.LastRecheckAt.IsZero() {
+		return false
+	}
+	return now.Sub(stat.LastRecheckAt) < time.Duration(recheckDays)*24*time.Hour
+}
+
+func loadEntry(url string) (Stat, bool) {
+	if url == "" {
+		return Stat{}, false
+	}
+	outputPath, ok := getOutputPath()
+	if !ok {
+		return Stat{}, false
+	}
+	store, err := loadStats(outputPath)
+	if err != nil {
+		return Stat{}, false
+	}
+	entry, exists := store[url]
+	return entry, exists
 }
 
 func isDeadSub(entry Stat, now time.Time, days int) bool {
@@ -144,7 +303,7 @@ func collectDeadSubs(store statsStore, checked map[string]CheckStat, now time.Ti
 		if !ok {
 			continue
 		}
-		if isDeadSub(entry, now, days) {
+		if isDeadSub(entry, now, days) && shouldSkip(entry, now) {
 			dead = append(dead, url)
 		}
 	}
@@ -187,10 +346,14 @@ func writeDeadSubsFile(outputPath string, dead []string, store statsStore, now t
 		return err
 	}
 
+	recheckDays := config.GlobalConfig.DeadSubRecheckDays
 	var b strings.Builder
 	fmt.Fprintf(&b, "# 以下订阅连续 %d 天无可用节点，后续检测将自动跳过\n", days)
+	if recheckDays > 0 {
+		fmt.Fprintf(&b, "# 每 %d 天抽检一次，恢复可用后自动重新启用\n", recheckDays)
+	}
 	fmt.Fprintf(&b, "# 更新时间: %s\n", now.Format("2006-01-02 15:04:05"))
-	fmt.Fprintf(&b, "# 恢复检测: 从 config 删除链接，或删除 output/%s 中对应条目后重启\n", statsFile)
+	fmt.Fprintf(&b, "# 恢复检测: 删除 output/%s 中对应条目，或等待抽检恢复\n", statsFile)
 	fmt.Fprintf(&b, "# 格式: URL | 末次成功 | 本次成功/总数\n")
 	for _, url := range dead {
 		entry := store[url]

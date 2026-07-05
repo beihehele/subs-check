@@ -14,7 +14,9 @@ import (
 
 	"github.com/beihehele/subs-check/check"
 	"github.com/beihehele/subs-check/config"
+	proxies "github.com/beihehele/subs-check/proxy"
 	"github.com/beihehele/subs-check/save/method"
+	"github.com/beihehele/subs-check/substats"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -84,6 +86,7 @@ func (app *App) initHttpServer() error {
 
 			// 日志相关API
 			api.GET("/logs", app.getLogs)
+			api.GET("/sub-stats", app.getSubStats)
 		}
 
 		// 配置页面
@@ -204,6 +207,12 @@ func (app *App) forceCloseHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "已强制关闭"})
 }
 
+// getSubStats 返回各订阅检测统计
+func (app *App) getSubStats(c *gin.Context) {
+	snap := substats.LoadSnapshot(proxies.ListSubUrls())
+	c.JSON(http.StatusOK, snap)
+}
+
 // getLogs 获取最近日志
 func (app *App) getLogs(c *gin.Context) {
 	// 简单实现，从日志文件读取最后xx行
@@ -221,7 +230,7 @@ func (app *App) getLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"logs": lines})
 }
 
-// getLogs 获取最近日志
+// getVersion 返回应用版本
 func (app *App) getVersion(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"version": app.version})
 }

@@ -7,27 +7,28 @@ concurrent: 50
 media-concurrent: 20
 # 测速并发数（默认等于concurrent）
 # 建议设置较低值，避免并发抢带宽导致测速不准
-speed-concurrent: 20
+speed-concurrent: 2
 # 是否打乱节点的测试顺序（仅影响测试先后，输出顺序保持订阅原序不变）
 # 开启后可避免同机场相邻节点、同节点的多个协议被扎堆在同一时间窗口测试，
 # 从而降低相邻IP一起出问题、互相干扰的概率
 shuffle-test-order: true
 # 检查间隔(分钟)
 # 必须大于0，小于等于0会设置间隔1分钟
-check-interval: 120
+check-interval: 180
 # cron表达式，如果配置了此项，将忽略check-interval
 # 支持标准cron表达式，如：
 # "0 */2 * * *" 表示每2小时的整点执行
 # "0 0 */2 * *" 表示每2天的0点执行
 # "0 0 1 * *" 表示每月1日0点执行
 # "*/30 * * * *" 表示每30分钟执行一次
-# cron-expression: "*/30 * * * *"
+# 配置每3小时整点执行
+cron-expression: "0 */3 * * *"
 
 # 最终保留的成功节点数量（0=不裁剪，但仍按地区分组、组内排序输出）
 # 全部检测完成后：按 Country 分组（需 rename-node 或 iprisk），组内按测速降序、延迟升序
 # 每组至少保留 1 个最优节点；不足 limit 时从次优节点继续填充
 # 若地区数 > limit，mandatory 优先，最终数量可 soft 超出 limit（每地区各 1 个）
-success-limit: 0
+success-limit: 20
 
 # 超时时间(毫秒)(节点的最大延迟)
 timeout: 5000
@@ -37,9 +38,10 @@ alive-test-url: http://gstatic.com/generate_204
 # 测速地址(注意 并发数*节点速度<最大网速 否则测速结果不准确)
 # 尽量不要使用Speedtest，Cloudflare提供的下载链接，因为很多节点屏蔽测速网站
 # 如果找不到稳定的测速地址，可以自建测速地址
-speed-test-url: https://github.com/AaronFeng753/Waifu2x-Extension-GUI/releases/download/v2.21.12/Waifu2x-Extension-GUI-v2.21.12-Portable.7z
+# speed-test-url: https://github.com/AaronFeng753/Waifu2x-Extension-GUI/releases/download/v2.21.12/Waifu2x-Extension-GUI-v2.21.12-Portable.7z
+speed-test-url: https://fast.dayanjing.us.kg/speedtest?bytes=104857600
 # 最低测速结果舍弃(KB/s)
-min-speed: 512
+min-speed: 1024
 # 下载测试时间(s)(与下载链接大小相关，默认最大测试10s)
 download-timeout: 10
 # 单节点测速下载数据大小(MB)限制，0为不限
@@ -88,11 +90,12 @@ filter:
   # - "YT-"                      # 保留解锁 YouTube Premium 的节点
   # - "CL-"                      # 保留解锁 Claude 的节点
   # - "SP-"                      # 保留解锁 Spotify 的节点
+  # - "TG-"                      # 保留解锁 Telegram 的节点
 
 # 是否开启流媒体检测，其中IP欺诈依赖重命名
-media-check: false
+media-check: 
 # 流媒体检测超时时间(秒)，未设置则默认为10秒
-media-check-timeout: 5
+media-check-timeout: 10
 platforms:
   - iprisk
   - tiktok
@@ -103,13 +106,14 @@ platforms:
   - gemini
   - claude
   - spotify
+  - telegram
 
 # 保留最近N天内可用的历史节点（天）
 # 开启后每次检测会保存节点快照到 output/history/ 目录
 # 下次检测时会将历史节点加入待测队列重新检测，通过的节点才会保留到输出中
 # 过期的历史文件会自动清理
 # 0 = 关闭此功能
-keep-days: 0
+keep-days: 1
 
 # 输出目录
 # 如果为空，则为程序所在目录的config目录
@@ -214,7 +218,7 @@ sub-urls-concurrent: 20
 sub-urls-get-ua: "clash.meta (https://github.com/beihehele/subs-check)"
 # Github Proxy，获取订阅使用，结尾要带的 /
 # github-proxy: "https://ghfast.top/"
-github-proxy: ""
+github-proxy: "https://fast.dayanjing.us.kg/raw/"
 # 此参数更通用，适用于拉取代理、消息推送、文件上传等等
 # 写法跟环境变量一样。修改需重启生效
 # proxy: "http://username:password@192.168.1.1:7890"
@@ -224,6 +228,8 @@ proxy: ""
 success-rate: 0
 # 订阅连续无可用节点的天数阈值；超过后自动跳过该订阅并写入 output/dead-subs.txt（0=关闭）
 dead-sub-days: 2
+# 失效订阅抽检间隔（天）；超过此间隔会重新检测一次，恢复可用则自动启用（0=永不抽检）
+dead-sub-recheck-days: 7
 
 # DNS 配置，支持 udp/tcp/tls/https/quic 协议
 # enable=false 走 mihomo 默认（系统 DNS + 仅 IPv4）；ipv6=true 允许 v6 解析

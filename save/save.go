@@ -100,8 +100,9 @@ func SaveConfig(results []check.Result) {
 
 // marshalProxies 从检查结果中提取代理并序列化为 YAML
 func marshalProxies(results []check.Result) ([]byte, error) {
-	proxies := make([]map[string]any, 0, len(results))
-	for _, result := range results {
+	ordered := check.SortResultsByRegion(results)
+	proxies := make([]map[string]any, 0, len(ordered))
+	for _, result := range ordered {
 		proxies = append(proxies, result.Proxy)
 	}
 	if len(proxies) == 0 {

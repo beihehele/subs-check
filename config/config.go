@@ -43,6 +43,7 @@ type Config struct {
 	SubUrls              []string `yaml:"sub-urls"`
 	SuccessRate          float32  `yaml:"success-rate"`
 	DeadSubDays          int      `yaml:"dead-sub-days"`
+	DeadSubRecheckDays   int      `yaml:"dead-sub-recheck-days"`
 	MihomoApiUrl         string   `yaml:"mihomo-api-url"`
 	MihomoApiSecret      string   `yaml:"mihomo-api-secret"`
 	ListenPort           string   `yaml:"listen-port"`
@@ -95,6 +96,7 @@ var GlobalConfig = &Config{
 	SubUrlsReTry:       3,
 	SubUrlsConcurrent:  20,
 	DeadSubDays:        2,
+	DeadSubRecheckDays: 7,
 }
 
 //go:embed config.example.yaml
