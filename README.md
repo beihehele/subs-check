@@ -235,10 +235,10 @@ http://127.0.0.1:8299/download/sub
 # URI 订阅
 http://127.0.0.1:8299/download/sub?target=URI
 
-# Mihomo/ClashMeta
+# Mihomo/ClashMeta（节点数与 all.yaml 一致，推荐）
 http://127.0.0.1:8299/download/sub?target=ClashMeta
 
-# Clash
+# Clash 经典格式（会丢弃 vless/hysteria2 等 Mihomo 专有协议，节点数可能少于 all.yaml）
 http://127.0.0.1:8299/download/sub?target=Clash
 
 # V2Ray
@@ -272,7 +272,9 @@ http://127.0.0.1:8299/api/file/mihomo
 
 | 服务地址                        | 格式说明                | 来源说明|
 |-------------------------------|-------------------|----|
-| `http://127.0.0.1:8199/sub/all.yaml`   | Clash 格式节点 |由subs-check直接生成|
+| `http://127.0.0.1:8199/all.yaml`   | Clash 格式节点 |由subs-check直接生成，与 `target=ClashMeta` 节点数一致|
+| `http://127.0.0.1:8299/download/sub?target=ClashMeta` | Mihomo/Clash Meta 订阅 |经 sub-store 转换，节点数应与 all.yaml 相同|
+| `http://127.0.0.1:8299/download/sub?target=Clash` | Clash 经典订阅 |不含 vless/hysteria2 等，节点数可能更少|
 | `http://127.0.0.1:8199/sub/mihomo.yaml`| 带分流规则的 Mihomo/Clash 订阅 |从上方sub-store转换下载后提供|
 | `http://127.0.0.1:8199/sub/base64.txt` | Base64 格式订阅 |从上方sub-store转换下载后提供|
 

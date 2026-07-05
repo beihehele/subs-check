@@ -388,3 +388,45 @@ func userScriptContent(process []map[string]any) string {
 	}
 	return ""
 }
+
+func TestSubStoreDownloadCountMatch(t *testing.T) {
+	base := startTempSubStore(t)
+	BaseURL = base
+	config.GlobalConfig.GithubProxy = ""
+	config.GlobalConfig.MihomoOverwriteUrl = "http://127.0.0.1:9/strategy.yaml"
+
+	content := []byte(`proxies:
+  - {name: ss1, type: ss, server: 1.1.1.1, port: 443, cipher: aes-256-gcm, password: p}
+  - {name: vmess1, type: vmess, server: 2.2.2.2, port: 443, uuid: u, alterId: 0, cipher: auto}
+  - {name: vless1, type: vless, server: 3.3.3.3, port: 443, uuid: u, tls: true}
+  - {name: hy2, type: hysteria2, server: 4.4.4.4, port: 443, password: p}
+`)
+	want, err := countProxiesInYAML(content)
+	if err != nil {
+		t.Fatalf("count source: %v", err)
+	}
+
+	if err := createSub(content); err != nil {
+		t.Fatalf("createSub: %v", err)
+	}
+
+	for _, target := range []string{"Clash", "ClashMeta"} {
+		resp, err := http.Get(fmt.Sprintf("%s/download/%s?target=%s", base, SubName, target))
+		if err != nil {
+			t.Fatalf("download %s: %v", target, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("download %s status=%d body=%s", target, resp.StatusCode, body)
+		}
+		got, err := countProxiesInYAML(body)
+		if err != nil {
+			t.Fatalf("count %s: %v", target, err)
+		}
+		t.Logf("target=%s input=%d output=%d", target, want, got)
+		if target == "ClashMeta" && got != want {
+			t.Errorf("ClashMeta should keep all proxies: want %d got %d", want, got)
+		}
+	}
+}

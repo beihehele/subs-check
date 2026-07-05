@@ -149,6 +149,8 @@ notify-title: "🔔 节点状态更新"
 
 # sub-store的启动端口，为空则不启动sub-store
 # 更新需重启程序，不可监听局域网IP，只有三种写法 :8299, 127.0.0.1:8299, 0.0.0.0:8299
+# 注意：/download/sub?target=Clash 会丢弃 vless/hysteria2 等新协议节点；
+#       与 all.yaml 数量对齐请使用 target=ClashMeta（Mihomo/Clash Meta）
 # sub-store-port: ":8299"
 sub-store-port: ":8299"
 # sub-store自定义访问路径，必须以/开头，后续访问订阅也要带上此路径

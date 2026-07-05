@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/beihehele/subs-check/config"
+	"gopkg.in/yaml.v3"
 )
 
 // ============================================================================
@@ -159,6 +160,10 @@ func UpdateSubStore(yamlData []byte) {
 		slog.Error(fmt.Sprintf("更新sub配置文件失败: %v", err))
 		return
 	}
+	if err := stripEmptyQuickSettingOperator(); err != nil {
+		slog.Warn(fmt.Sprintf("清理 sub-store 默认算子失败: %v", err))
+	}
+	logSubStoreProxyCounts(yamlData)
 	if config.GlobalConfig.MihomoOverwriteUrl != mihomoOverwriteUrl {
 		if err := updatefile(); err != nil {
 			slog.Error(fmt.Sprintf("更新mihomo配置文件失败: %v", err))
@@ -199,9 +204,7 @@ func createSub(data []byte) error {
 		Name:    "sub",
 		Remark:  "subs-check专用,勿动",
 		Source:  "local",
-		Process: []Operator{
-			{Type: "Quick Setting Operator"},
-		},
+		// 不挂默认算子: subs-check 已做去重/过滤, 且 Quick Setting 可能影响 /download 节点数
 	}
 	json, err := json.Marshal(sub)
 	if err != nil {
@@ -240,6 +243,149 @@ func updateSub(data []byte) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("更新sub配置文件失败,错误码:%d", resp.StatusCode)
 	}
+	return nil
+}
+
+func countProxiesInYAML(data []byte) (int, error) {
+	var doc struct {
+		Proxies []map[string]any `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return 0, err
+	}
+	return len(doc.Proxies), nil
+}
+
+func fetchDownloadProxyCount(target string) (int, error) {
+	url := fmt.Sprintf("%s/download/%s?target=%s", BaseURL, SubName, target)
+	resp, err := http.Get(url)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
+	}
+	return countProxiesInYAML(body)
+}
+
+func logSubStoreProxyCounts(source []byte) {
+	sourceCount, err := countProxiesInYAML(source)
+	if err != nil {
+		slog.Warn(fmt.Sprintf("统计 all.yaml 节点数失败: %v", err))
+		return
+	}
+	metaCount, err := fetchDownloadProxyCount("ClashMeta")
+	if err != nil {
+		slog.Warn(fmt.Sprintf("统计 sub-store ClashMeta 节点数失败: %v", err))
+		return
+	}
+	if metaCount != sourceCount {
+		slog.Warn(fmt.Sprintf(
+			"sub-store ClashMeta 节点数(%d)与 all.yaml(%d)不一致，请检查 sub-store 订阅是否添加了额外算子",
+			metaCount, sourceCount,
+		))
+	} else {
+		slog.Info(fmt.Sprintf("sub-store 节点数校验: all.yaml=%d, ClashMeta=%d", sourceCount, metaCount))
+	}
+
+	clashCount, err := fetchDownloadProxyCount("Clash")
+	if err != nil {
+		return
+	}
+	if clashCount < sourceCount {
+		slog.Info(fmt.Sprintf(
+			"target=Clash 仅输出 %d 个节点(共 %d)，含 vless/hysteria2 等请改用 target=ClashMeta",
+			clashCount, sourceCount,
+		))
+	}
+}
+
+func getSubProcess() ([]map[string]any, error) {
+	resp, err := http.Get(fmt.Sprintf("%s/api/sub/%s", BaseURL, SubName))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Data struct {
+			Process []map[string]any `json:"process"`
+		} `json:"data"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	if result.Status != "success" {
+		return nil, fmt.Errorf("status=%s", result.Status)
+	}
+	return result.Data.Process, nil
+}
+
+func isEmptyQuickSetting(op map[string]any) bool {
+	if op["type"] != "Quick Setting Operator" {
+		return false
+	}
+	args, ok := op["args"]
+	if !ok || args == nil {
+		return true
+	}
+	if m, ok := args.(map[string]any); ok && len(m) == 0 {
+		return true
+	}
+	return false
+}
+
+// stripEmptyQuickSettingOperator removes the default no-arg Quick Setting operator
+// that older subs-check versions injected on create. User-configured operators are kept.
+func stripEmptyQuickSettingOperator() error {
+	process, err := getSubProcess()
+	if err != nil {
+		return err
+	}
+	filtered := make([]map[string]any, 0, len(process))
+	removed := 0
+	for _, op := range process {
+		if isEmptyQuickSetting(op) {
+			removed++
+			continue
+		}
+		filtered = append(filtered, op)
+	}
+	if removed == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{"process": filtered})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPatch,
+		fmt.Sprintf("%s/api/sub/%s", BaseURL, SubName),
+		bytes.NewBuffer(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	slog.Info(fmt.Sprintf("已移除 sub-store 默认 Quick Setting 算子(%d 个)", removed))
 	return nil
 }
 
