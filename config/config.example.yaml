@@ -93,7 +93,7 @@ filter:
   # - "TG-"                      # 保留解锁 Telegram 的节点
 
 # 是否开启流媒体检测，其中IP欺诈依赖重命名
-media-check: 
+media-check: true
 # 流媒体检测超时时间(秒)，未设置则默认为10秒
 media-check-timeout: 10
 platforms:
