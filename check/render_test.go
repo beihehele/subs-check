@@ -5,7 +5,6 @@ import (
 
 	"github.com/beihehele/subs-check/check/platform"
 	"github.com/beihehele/subs-check/config"
-	proxyutils "github.com/beihehele/subs-check/proxy"
 )
 
 // withConfig 临时替换 config.GlobalConfig 的内容,测试结束后还原。
@@ -218,7 +217,6 @@ func TestRenderName_IPRiskTag(t *testing.T) {
 }
 
 func TestRenderName_RenameOnWithCountry(t *testing.T) {
-	proxyutils.ResetRenameCounter()
 	withConfig(t, config.Config{
 		RenameNode: true,
 		NodePrefix: "PREFIX-",
@@ -232,11 +230,52 @@ func TestRenderName_RenameOnWithCountry(t *testing.T) {
 		if got == "original" {
 			t.Errorf("RenderName() should not use original name when RenameNode=true, got %q", got)
 		}
-		if len(got) < len("PREFIX-") || got[:len("PREFIX-")] != "PREFIX-" {
-			t.Errorf("RenderName() should start with prefix, got %q", got)
+		want := "PREFIX-🇭🇰HK"
+		if got != want {
+			t.Errorf("RenderName() = %q, want preview %q", got, want)
 		}
-		if !stringContains(got, "HK") {
-			t.Errorf("RenderName() should contain country code HK, got %q", got)
+	})
+}
+
+func TestRenderName_RenamePreviewIsIdempotent(t *testing.T) {
+	withConfig(t, config.Config{
+		RenameNode: true,
+		NodePrefix: "P-",
+		Platforms:  []string{},
+	}, func() {
+		r := Result{Proxy: map[string]any{"name": "x"}, Country: "SG"}
+		got1 := RenderName(r, false)
+		got2 := RenderName(r, false)
+		if got1 != got2 {
+			t.Fatalf("preview should be idempotent, got %q and %q", got1, got2)
+		}
+	})
+}
+
+func TestAssignDisplayNames_SeqFollowsOutputOrder(t *testing.T) {
+	pHK1 := map[string]any{"name": "a"}
+	pHK2 := map[string]any{"name": "b"}
+	pJP1 := map[string]any{"name": "c"}
+	results := []Result{
+		{Proxy: pHK1, Country: "HK", Speed: 100},
+		{Proxy: pJP1, Country: "JP", Speed: 200},
+		{Proxy: pHK2, Country: "HK", Speed: 150},
+	}
+	withConfig(t, config.Config{
+		RenameNode:   true,
+		NodePrefix:   "SC-",
+		SpeedTestUrl: "https://example.com/file",
+		Platforms:    []string{},
+	}, func() {
+		AssignDisplayNames(results)
+		if got := results[2].Proxy["name"].(string); got != "SC-🇭🇰HK_1|150KB/s" {
+			t.Fatalf("fastest HK node = %q", got)
+		}
+		if got := results[0].Proxy["name"].(string); got != "SC-🇭🇰HK_2|100KB/s" {
+			t.Fatalf("second HK node = %q", got)
+		}
+		if got := results[1].Proxy["name"].(string); got != "SC-🇯🇵JP_1|200KB/s" {
+			t.Fatalf("JP node = %q", got)
 		}
 	})
 }
@@ -244,7 +283,6 @@ func TestRenderName_RenameOnWithCountry(t *testing.T) {
 func TestRenderName_RenameOnButEmptyCountry_UsesOtherFallback(t *testing.T) {
 	// 重命名开启但 Country 为空(Phase 2 查询失败),应走 ❓Other 兜底
 	// 而不是回退到原名,否则上游带 |speed|media 尾缀的脏名会透传进来再被叠加。
-	proxyutils.ResetRenameCounter()
 	withConfig(t, config.Config{
 		RenameNode: true,
 		NodePrefix: "PREFIX-",
@@ -258,21 +296,8 @@ func TestRenderName_RenameOnButEmptyCountry_UsesOtherFallback(t *testing.T) {
 		if got == "🇹🇼原名|745KB/s|YT-TW" {
 			t.Errorf("RenderName() should not preserve polluted original name when RenameNode=true, got %q", got)
 		}
-		if len(got) < len("PREFIX-") || got[:len("PREFIX-")] != "PREFIX-" {
-			t.Errorf("RenderName() should start with prefix, got %q", got)
-		}
-		if !stringContains(got, "Other") {
-			t.Errorf("RenderName() should fall back to Other when Country is empty, got %q", got)
+		if got != "PREFIX-❓Other" {
+			t.Errorf("RenderName() preview = %q, want PREFIX-❓Other", got)
 		}
 	})
-}
-
-// 辅助函数
-func stringContains(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

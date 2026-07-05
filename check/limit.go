@@ -23,15 +23,12 @@ var regionPriority = []string{
 }
 
 // regionKey returns the grouping key for a result.
-// Priority: Country → proxy name → rendered name → OTHER.
+// Priority: Country → proxy name keywords → OTHER.
 func regionKey(r Result) string {
 	if r.Country != "" {
 		return strings.ToUpper(r.Country)
 	}
 	if code := inferRegionFromName(proxyDisplayName(r)); code != "" {
-		return code
-	}
-	if code := inferRegionFromName(RenderName(r, false)); code != "" {
 		return code
 	}
 	return regionOther
@@ -173,6 +170,21 @@ func SortResultsByRegion(results []Result) []Result {
 	}
 	groups, regionKeys := buildRegionGroups(results)
 	return flattenRegionGroups(groups, regionKeys)
+}
+
+// OutputOrderIndices returns result slice indices in region-sorted output order.
+func OutputOrderIndices(results []Result) []int {
+	if len(results) == 0 {
+		return nil
+	}
+	groups, regionKeys := buildRegionGroups(results)
+	indices := make([]int, 0, len(results))
+	for _, k := range regionKeys {
+		for _, item := range groups[k] {
+			indices = append(indices, item.idx)
+		}
+	}
+	return indices
 }
 
 // ApplySuccessLimit groups passing results by region, sorts within each group

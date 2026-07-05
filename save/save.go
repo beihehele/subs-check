@@ -21,8 +21,8 @@ type SaveFunc func(data []byte, filename string) error
 // 执行顺序很关键:
 //   1. 先把 results 序列化保存到 history(此时 proxy["name"] 仍是原始名,
 //      history 文件天然干净,keep-days 下次加载时不会累积标签)
-//   2. 然后原地 mutate 每个 result.Proxy["name"] 为最终展示名
-//      (调 check.RenderName 生成 base + 媒体标签 + 速度标签 + sub_tag)
+//   2. 然后 AssignDisplayNames 按地区输出顺序分配最终展示名
+//      (base + 媒体标签 + 速度标签 + sub_tag, _N 序号在此一次性分配)
 //   3. 最后用 mutate 过的 results 序列化成 all.yaml、mihomo.yaml、base64.txt
 //      并写本地 / 远程 / SubStore
 //
@@ -46,13 +46,8 @@ func SaveConfig(results []check.Result) {
 		}
 	}
 
-	// ② 原地 mutate:把每个 proxy 的 name 改成最终展示名
-	for i := range results {
-		if results[i].Proxy == nil {
-			continue
-		}
-		results[i].Proxy["name"] = check.RenderName(results[i], true)
-	}
+	// ② 按最终输出顺序分配展示名(含稳定 _N 序号)
+	check.AssignDisplayNames(results)
 
 	// ③ 用 mutate 过的 results 序列化,给 all.yaml / 远程 / SubStore 复用
 	allYamlData, err := marshalProxies(results)

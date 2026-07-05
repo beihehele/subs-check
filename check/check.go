@@ -167,8 +167,6 @@ func effectiveConcurrency(phaseConcurrency, fallback, itemCount int) int {
 
 // Check 执行代理检测的主函数
 func Check() ([]Result, error) {
-	proxyutils.ResetRenameCounter()
-
 	ProxyCount.Store(0)
 	Available.Store(0)
 	Progress.Store(0)
