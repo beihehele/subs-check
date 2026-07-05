@@ -18,6 +18,7 @@ import (
 	"github.com/beihehele/subs-check/check/platform"
 	"github.com/beihehele/subs-check/config"
 	proxyutils "github.com/beihehele/subs-check/proxy"
+	"github.com/beihehele/subs-check/substats"
 	"github.com/juju/ratelimit"
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/constant"
@@ -746,6 +747,19 @@ func (pc *ProxyChecker) checkSubscriptionSuccessRate(allProxies []map[string]any
 		}
 	}
 
+	// 纳入本次实际检测的订阅（含拉取失败/空订阅）
+	for _, url := range proxyutils.ListSubUrls() {
+		if substats.IsDead(url) {
+			continue
+		}
+		if _, ok := subStats[url]; !ok {
+			subStats[url] = struct {
+				total   int
+				success int
+			}{}
+		}
+	}
+
 	// 统计成功节点的订阅来源
 	for _, result := range pc.results {
 		if result.Proxy != nil {
@@ -763,6 +777,15 @@ func (pc *ProxyChecker) checkSubscriptionSuccessRate(allProxies []map[string]any
 			}
 		}
 	}
+
+	trackStats := make(map[string]substats.CheckStat, len(subStats))
+	for subUrl, stats := range subStats {
+		trackStats[subUrl] = substats.CheckStat{
+			Total:   stats.total,
+			Success: stats.success,
+		}
+	}
+	substats.Track(trackStats)
 
 	// 检查成功率并发出警告
 	for subUrl, stats := range subStats {

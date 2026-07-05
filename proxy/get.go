@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/beihehele/subs-check/config"
+	"github.com/beihehele/subs-check/substats"
 	"github.com/beihehele/subs-check/utils"
 	"github.com/metacubex/mihomo/common/convert"
 	"github.com/metacubex/mihomo/component/resolver"
@@ -33,6 +34,22 @@ func GetProxies() ([]map[string]any, error) {
 
 	// 解析本地与远程订阅清单
 	subUrls, localNum, remoteNum := resolveSubUrls()
+	if config.GlobalConfig.DeadSubDays > 0 {
+		active := make([]subEntry, 0, len(subUrls))
+		skipped := 0
+		for _, e := range subUrls {
+			if substats.IsDead(utils.WarpUrl(e.url)) {
+				skipped++
+				continue
+			}
+			active = append(active, e)
+		}
+		if skipped > 0 {
+			slog.Warn(fmt.Sprintf("已跳过 %d 个失效订阅（连续 %d 天无可用节点，详见 output/dead-subs.txt）",
+				skipped, config.GlobalConfig.DeadSubDays))
+		}
+		subUrls = active
+	}
 	slog.Info("订阅链接数量", "本地", localNum, "远程", remoteNum, "总计", len(subUrls))
 
 	if len(config.GlobalConfig.NodeType) > 0 {
@@ -161,6 +178,16 @@ func GetProxies() ([]map[string]any, error) {
 	}
 
 	return mihomoProxies, nil
+}
+
+// ListSubUrls returns normalized subscription URLs from local and remote lists.
+func ListSubUrls() []string {
+	entries, _, _ := resolveSubUrls()
+	urls := make([]string, 0, len(entries))
+	for _, e := range entries {
+		urls = append(urls, utils.WarpUrl(e.url))
+	}
+	return urls
 }
 
 // from 3k

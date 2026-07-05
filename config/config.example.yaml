@@ -222,6 +222,8 @@ github-proxy: ""
 proxy: ""
 # 符合条件节点数量的占比，低于此值会将订阅链接打印出来，用于排查质量差的订阅
 success-rate: 0
+# 订阅连续无可用节点的天数阈值；超过后自动跳过该订阅并写入 output/dead-subs.txt（0=关闭）
+dead-sub-days: 2
 
 # DNS 配置，支持 udp/tcp/tls/https/quic 协议
 # enable=false 走 mihomo 默认（系统 DNS + 仅 IPv4）；ipv6=true 允许 v6 解析
