@@ -1,12 +1,17 @@
 package method
 
 import (
+	"os"
 	"testing"
 
 	"github.com/beihehele/subs-check/config"
 )
 
 func TestUploadToS3(t *testing.T) {
+	if os.Getenv("MINIO_TEST") == "" {
+		t.Skip("set MINIO_TEST=1 with a local MinIO at 127.0.0.1:9000 to run")
+	}
+
 	config.GlobalConfig.S3Endpoint = "127.0.0.1:9000"
 	config.GlobalConfig.S3AccessID = "123"
 	config.GlobalConfig.S3SecretKey = "123"

@@ -45,19 +45,101 @@ func proxyDisplayName(r Result) string {
 }
 
 // inferRegionFromName extracts ISO-like region code from common keywords in node names.
+// Keywords are matched longest-first so short codes like "IN" do not match inside
+// longer words (e.g. SINGAPORE). ASCII codes of length <= 3 also require a token
+// boundary (not embedded in a longer letter run).
 func inferRegionFromName(name string) string {
 	if name == "" {
 		return ""
 	}
 	upper := strings.ToUpper(name)
-	for code, keywords := range regionNameKeywords {
-		for _, kw := range keywords {
-			if strings.Contains(upper, strings.ToUpper(kw)) {
-				return code
+	for _, e := range regionKeywordEntries {
+		kw := e.kwUpper
+		if e.tokenBound {
+			if !containsASCIIToken(upper, kw) {
+				continue
 			}
+			return e.code
+		}
+		if strings.Contains(upper, kw) {
+			return e.code
 		}
 	}
 	return ""
+}
+
+type regionKeywordEntry struct {
+	code       string
+	kwUpper    string
+	tokenBound bool
+}
+
+// regionKeywordEntries is regionNameKeywords flattened and sorted by keyword
+// length descending (stable tie-break by keyword then code).
+var regionKeywordEntries []regionKeywordEntry
+
+func init() {
+	for code, keywords := range regionNameKeywords {
+		for _, kw := range keywords {
+			upper := strings.ToUpper(kw)
+			regionKeywordEntries = append(regionKeywordEntries, regionKeywordEntry{
+				code:       code,
+				kwUpper:    upper,
+				tokenBound: isShortASCIICode(upper),
+			})
+		}
+	}
+	sort.SliceStable(regionKeywordEntries, func(i, j int) bool {
+		a, b := regionKeywordEntries[i], regionKeywordEntries[j]
+		if len(a.kwUpper) != len(b.kwUpper) {
+			return len(a.kwUpper) > len(b.kwUpper)
+		}
+		if a.kwUpper != b.kwUpper {
+			return a.kwUpper < b.kwUpper
+		}
+		return a.code < b.code
+	})
+}
+
+func isShortASCIICode(kw string) bool {
+	if len(kw) == 0 || len(kw) > 3 {
+		return false
+	}
+	for i := 0; i < len(kw); i++ {
+		c := kw[i]
+		if c < 'A' || c > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+// containsASCIIToken reports whether needle appears in haystack as a letter
+// token (not preceded/followed by A–Z). Digits, spaces, and punctuation count
+// as boundaries — matching names like "SG-01" or "US_LA".
+func containsASCIIToken(haystack, needle string) bool {
+	if needle == "" {
+		return false
+	}
+	start := 0
+	for {
+		i := strings.Index(haystack[start:], needle)
+		if i < 0 {
+			return false
+		}
+		i += start
+		leftOK := i == 0 || !isASCIILetter(haystack[i-1])
+		right := i + len(needle)
+		rightOK := right == len(haystack) || !isASCIILetter(haystack[right])
+		if leftOK && rightOK {
+			return true
+		}
+		start = i + 1
+	}
+}
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
 }
 
 var regionNameKeywords = map[string][]string{

@@ -3,15 +3,23 @@ package check
 import "testing"
 
 func TestInferRegionFromName(t *testing.T) {
-	cases := map[string]string{
-		"香港 01":     "HK",
-		"🇸🇬 Singapore": "SG",
-		"US-LA-01":  "US",
-		"未知节点":      "",
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"香港 01", "HK"},
+		{"🇸🇬 Singapore", "SG"},
+		{"Singapore Node", "SG"},
+		{"US-LA-01", "US"},
+		{"SG-01", "SG"},
+		{"IN-01", "IN"},
+		{"INDIA-MUMBAI", "IN"},
+		{"FINLAND", ""},
+		{"未知节点", ""},
 	}
-	for name, want := range cases {
-		if got := inferRegionFromName(name); got != want {
-			t.Fatalf("inferRegionFromName(%q) = %q, want %q", name, got, want)
+	for _, tc := range cases {
+		if got := inferRegionFromName(tc.name); got != tc.want {
+			t.Fatalf("inferRegionFromName(%q) = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

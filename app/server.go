@@ -2,7 +2,9 @@ package app
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
 	"html/template"
 	"io"
@@ -51,8 +53,10 @@ func (app *App) initHttpServer() error {
 
 	router.Static("/sub/", saver.OutputPath)
 
-	// pprof 路由，空闲时不消耗性能
-	pprof.Register(router)
+	// pprof 默认关闭；设置 ENABLE_PPROF=1 后开放。
+	if os.Getenv("ENABLE_PPROF") == "1" {
+		pprof.Register(router)
+	}
 
 	// 根据配置决定是否启用Web控制面板
 	if config.GlobalConfig.EnableWebUI {
@@ -61,10 +65,11 @@ func (app *App) initHttpServer() error {
 				config.GlobalConfig.APIKey = apiKey
 			} else {
 				config.GlobalConfig.APIKey = GenerateSimpleKey()
-				slog.Warn("未设置api-key，已生成一个随机api-key", "api-key", config.GlobalConfig.APIKey)
+				slog.Warn("未设置 api-key，已自动生成（完整值仅输出到 stderr）")
+				fmt.Fprintf(os.Stderr, "subs-check api-key: %s\n", config.GlobalConfig.APIKey)
 			}
 		}
-		slog.Info("启用Web控制面板", "path", "http://ip:port/admin", "api-key", config.GlobalConfig.APIKey)
+		slog.Info("启用Web控制面板", "path", "http://ip:port/admin")
 
 		// 设置模板加载 - 只有在启用Web控制面板时才加载
 		router.SetHTMLTemplate(template.Must(template.New("").ParseFS(configFS, "templates/*.html")))
@@ -301,5 +306,9 @@ func ReadLastNLines(filePath string, n int) ([]string, error) {
 }
 
 func GenerateSimpleKey() string {
-	return fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }

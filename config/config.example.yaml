@@ -123,8 +123,8 @@ output-dir: ""
 # 如果为false，则不启动Web控制界面，仅启动订阅服务相关接口
 # 访问地址：http://127.0.0.1:8199/admin
 enable-web-ui: true
-# 填写Web控制面板的api-key，如果为空，则自动生成
-# 配置文件为空时，支持使用环境变量设置 API_KEY
+# 填写Web控制面板的api-key；为空则自动生成（完整值仅输出到 stderr）
+# 也可用环境变量 API_KEY；pprof 默认关闭，设 ENABLE_PPROF=1 开启
 api-key: ""
 
 # 检测完成后执行的回调脚本路径

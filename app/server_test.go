@@ -137,6 +137,17 @@ func TestReadLastNLines_SpansChunkBoundary(t *testing.T) {
 	}
 }
 
+func TestGenerateSimpleKey(t *testing.T) {
+	a := GenerateSimpleKey()
+	b := GenerateSimpleKey()
+	if len(a) != 32 {
+		t.Fatalf("expected 32 hex chars, got %q (len=%d)", a, len(a))
+	}
+	if a == b {
+		t.Fatalf("expected unique keys, got duplicates")
+	}
+}
+
 // itoa avoids importing strconv for a single use.
 func itoa(n int) string {
 	if n == 0 {
