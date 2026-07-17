@@ -26,8 +26,8 @@ cron-expression: "0 */3 * * *"
 
 # 最终保留的成功节点数量（0=不裁剪，但仍按地区分组、组内排序输出）
 # 全部检测完成后：按 Country 分组（需 rename-node 或 iprisk），组内按测速降序、延迟升序
-# 每组至少保留 1 个最优节点；不足 limit 时从次优节点继续填充
-# 若地区数 > limit，mandatory 优先，最终数量可 soft 超出 limit（每地区各 1 个）
+# 在 limit 内尽量按地区平均分配；余数优先补给节点质量更好的地区
+# 若地区数 > limit，严格不超过 limit，按各地区最优节点质量保留前 limit 个地区
 success-limit: 20
 
 # 超时时间(毫秒)(节点的最大延迟)

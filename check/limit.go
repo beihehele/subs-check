@@ -189,8 +189,8 @@ func OutputOrderIndices(results []Result) []int {
 
 // ApplySuccessLimit groups passing results by region, sorts within each group
 // (speed desc, latency asc, subscription idx asc), then optionally trims to
-// success-limit. Mandatory picks (best node per region) always win; when the
-// region count exceeds success-limit the total may soft-exceed the limit.
+// success-limit with even per-region allocation. When region count exceeds
+// success-limit, only the top regions by best-node quality are kept (hard cap).
 // When success-limit is 0, all nodes are kept but still region-grouped/sorted.
 func ApplySuccessLimit(results []Result) []Result {
 	if len(results) == 0 {
@@ -205,50 +205,75 @@ func ApplySuccessLimit(results []Result) []Result {
 		return flattenRegionGroups(groups, regionKeys)
 	}
 
-	mandatory := make([]indexedResult, 0, len(regionKeys))
-	for _, k := range regionKeys {
-		mandatory = append(mandatory, groups[k][0])
-	}
+	// Rank regions by best-node quality (better first).
+	qualityKeys := make([]string, len(regionKeys))
+	copy(qualityKeys, regionKeys)
+	sort.SliceStable(qualityKeys, func(i, j int) bool {
+		return lessResult(groups[qualityKeys[i]][0], groups[qualityKeys[j]][0], hasSpeed)
+	})
 
-	selectedIdx := make(map[int]bool, len(mandatory))
-	selected := make([]indexedResult, 0, len(mandatory))
-
-	for _, item := range mandatory {
-		selected = append(selected, item)
-		selectedIdx[item.idx] = true
-	}
-
-	if len(mandatory) > int(limit) {
+	activeKeys := qualityKeys
+	if len(activeKeys) > int(limit) {
+		activeKeys = activeKeys[:limit]
 		slog.Info(fmt.Sprintf(
-			"地区数(%d)超过 success-limit(%d)，mandatory 优先，保留 %d 个节点",
-			len(mandatory), limit, len(selected),
+			"地区数(%d)超过 success-limit(%d)，按节点质量保留 %d 个地区",
+			len(regionKeys), limit, len(activeKeys),
 		))
-		return buildRegionGroupedOutput(groups, regionKeys, selectedIdx)
 	}
 
-	var remaining []indexedResult
-	for _, k := range regionKeys {
-		if len(groups[k]) > 1 {
-			remaining = append(remaining, groups[k][1:]...)
-		}
+	quota := make(map[string]int, len(activeKeys))
+	n := len(activeKeys)
+	base := int(limit) / n
+	rem := int(limit) % n
+	for _, k := range activeKeys {
+		quota[k] = base
 	}
-	sortIndexed(remaining, hasSpeed)
-
-	for _, item := range remaining {
-		if len(selected) >= int(limit) {
-			break
-		}
-		if selectedIdx[item.idx] {
-			continue
-		}
-		selected = append(selected, item)
-		selectedIdx[item.idx] = true
+	for i := 0; i < rem; i++ {
+		quota[activeKeys[i]]++
 	}
 
-	if len(selected) < len(results) {
+	// Cap quota by available nodes; reclaim unused slots for regions with spare.
+	selectedCount := 0
+	for _, k := range activeKeys {
+		if quota[k] > len(groups[k]) {
+			quota[k] = len(groups[k])
+		}
+		selectedCount += quota[k]
+	}
+	// Round-robin reclaim keeps distribution even when some regions run out of nodes.
+	if selectedCount < int(limit) {
+		need := int(limit) - selectedCount
+		for need > 0 {
+			progress := false
+			for _, k := range activeKeys {
+				if need == 0 {
+					break
+				}
+				if quota[k] < len(groups[k]) {
+					quota[k]++
+					need--
+					progress = true
+				}
+			}
+			if !progress {
+				break
+			}
+		}
+	}
+
+	selectedIdx := make(map[int]bool, int(limit))
+	selectedTotal := 0
+	for _, k := range activeKeys {
+		for i := 0; i < quota[k]; i++ {
+			selectedIdx[groups[k][i].idx] = true
+			selectedTotal++
+		}
+	}
+
+	if selectedTotal < len(results) {
 		slog.Info(fmt.Sprintf(
 			"地区裁剪: %d → %d (%d 个地区)",
-			len(results), len(selected), len(regionKeys),
+			len(results), selectedTotal, len(activeKeys),
 		))
 	}
 

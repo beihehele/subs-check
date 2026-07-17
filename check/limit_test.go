@@ -77,7 +77,46 @@ func TestApplySuccessLimit_ZeroKeepsAllGrouped(t *testing.T) {
 	})
 }
 
-func TestApplySuccessLimit_FillAfterMandatory(t *testing.T) {
+func TestApplySuccessLimit_EvenDistribute(t *testing.T) {
+	withConfig(t, config.Config{
+		SpeedTestUrl: "http://example.invalid/dl",
+		SuccessLimit: 4,
+	}, func() {
+		in := []Result{
+			resultWith("HK", 300, 10, 0),
+			resultWith("HK", 200, 10, 1),
+			resultWith("HK", 100, 10, 2),
+			resultWith("SG", 250, 10, 3),
+			resultWith("SG", 100, 10, 4),
+			resultWith("JP", 400, 10, 5),
+		}
+		got := ApplySuccessLimit(in)
+		if len(got) != 4 {
+			t.Fatalf("expected 4 results, got %d", len(got))
+		}
+		countries := map[string]int{}
+		for _, r := range got {
+			countries[r.Country]++
+		}
+		// quality order JP>HK>SG; base=1 rem=1 → JP would get 2 but only has 1,
+		// unused slot reclaimed to next best with capacity → HK=2, SG=1, JP=1.
+		if countries["HK"] != 2 || countries["SG"] != 1 || countries["JP"] != 1 {
+			t.Fatalf("expected HK:2 SG:1 JP:1, got %v", countries)
+		}
+		// Within-region picks must be the fastest nodes.
+		hkSpeeds := []int{}
+		for _, r := range got {
+			if r.Country == "HK" {
+				hkSpeeds = append(hkSpeeds, r.Speed)
+			}
+		}
+		if hkSpeeds[0] != 300 || hkSpeeds[1] != 200 {
+			t.Fatalf("expected HK 300 then 200, got %v", hkSpeeds)
+		}
+	})
+}
+
+func TestApplySuccessLimit_EvenDistributeRemToBest(t *testing.T) {
 	withConfig(t, config.Config{
 		SpeedTestUrl: "http://example.invalid/dl",
 		SuccessLimit: 4,
@@ -88,6 +127,7 @@ func TestApplySuccessLimit_FillAfterMandatory(t *testing.T) {
 			resultWith("SG", 250, 10, 2),
 			resultWith("SG", 100, 10, 3),
 			resultWith("JP", 400, 10, 4),
+			resultWith("JP", 350, 10, 5),
 		}
 		got := ApplySuccessLimit(in)
 		if len(got) != 4 {
@@ -97,13 +137,23 @@ func TestApplySuccessLimit_FillAfterMandatory(t *testing.T) {
 		for _, r := range got {
 			countries[r.Country]++
 		}
-		if countries["HK"] < 1 || countries["SG"] < 1 || countries["JP"] < 1 {
-			t.Fatalf("each region should keep at least one, got %v", countries)
+		// quality JP>HK>SG; base=1 rem=1 → JP=2, HK=1, SG=1.
+		if countries["JP"] != 2 || countries["HK"] != 1 || countries["SG"] != 1 {
+			t.Fatalf("expected JP:2 HK:1 SG:1, got %v", countries)
+		}
+		jpSpeeds := []int{}
+		for _, r := range got {
+			if r.Country == "JP" {
+				jpSpeeds = append(jpSpeeds, r.Speed)
+			}
+		}
+		if jpSpeeds[0] != 400 || jpSpeeds[1] != 350 {
+			t.Fatalf("expected JP 400 then 350, got %v", jpSpeeds)
 		}
 	})
 }
 
-func TestApplySuccessLimit_MandatorySoftExceedsLimit(t *testing.T) {
+func TestApplySuccessLimit_HardCapKeepBestRegions(t *testing.T) {
 	withConfig(t, config.Config{
 		SpeedTestUrl: "http://example.invalid/dl",
 		SuccessLimit: 2,
@@ -114,8 +164,65 @@ func TestApplySuccessLimit_MandatorySoftExceedsLimit(t *testing.T) {
 			resultWith("JP", 300, 10, 2),
 		}
 		got := ApplySuccessLimit(in)
-		if len(got) != 3 {
-			t.Fatalf("expected soft exceed to 3, got %d", len(got))
+		if len(got) != 2 {
+			t.Fatalf("expected hard cap to 2, got %d", len(got))
+		}
+		countries := map[string]int{}
+		for _, r := range got {
+			countries[r.Country]++
+		}
+		if countries["JP"] != 1 || countries["SG"] != 1 || countries["HK"] != 0 {
+			t.Fatalf("expected JP+SG (best regions), got %v", countries)
+		}
+	})
+}
+
+func TestApplySuccessLimit_HardCapOneNodePerKeptRegion(t *testing.T) {
+	withConfig(t, config.Config{
+		SpeedTestUrl: "http://example.invalid/dl",
+		SuccessLimit: 2,
+	}, func() {
+		in := []Result{
+			resultWith("HK", 100, 10, 0),
+			resultWith("HK", 90, 10, 1),
+			resultWith("SG", 200, 10, 2),
+			resultWith("SG", 190, 10, 3),
+			resultWith("JP", 300, 10, 4),
+			resultWith("JP", 290, 10, 5),
+		}
+		got := ApplySuccessLimit(in)
+		if len(got) != 2 {
+			t.Fatalf("expected hard cap to 2, got %d", len(got))
+		}
+		countries := map[string]int{}
+		speeds := map[string]int{}
+		for _, r := range got {
+			countries[r.Country]++
+			speeds[r.Country] = r.Speed
+		}
+		if countries["JP"] != 1 || countries["SG"] != 1 || countries["HK"] != 0 {
+			t.Fatalf("expected one node each from JP+SG, got %v", countries)
+		}
+		if speeds["JP"] != 300 || speeds["SG"] != 200 {
+			t.Fatalf("expected best node per kept region, got speeds %v", speeds)
+		}
+	})
+}
+
+func TestApplySuccessLimit_OutputRegionPriorityOrder(t *testing.T) {
+	withConfig(t, config.Config{
+		SpeedTestUrl: "http://example.invalid/dl",
+		SuccessLimit: 2,
+	}, func() {
+		in := []Result{
+			resultWith("HK", 100, 10, 0),
+			resultWith("SG", 200, 10, 1),
+			resultWith("JP", 300, 10, 2),
+		}
+		got := ApplySuccessLimit(in)
+		// Selection by quality keeps JP+SG, but output follows region priority: SG then JP.
+		if len(got) != 2 || got[0].Country != "SG" || got[1].Country != "JP" {
+			t.Fatalf("expected output order SG then JP, got %+v", got)
 		}
 	})
 }
