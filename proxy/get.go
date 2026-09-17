@@ -31,6 +31,12 @@ type subEntry struct {
 }
 
 func GetProxies() ([]map[string]any, error) {
+	nodes, _, err := GetProxiesForCheck()
+	return nodes, err
+}
+
+// GetProxiesForCheck also reports feeds whose fetch/parse produced no usable data.
+func GetProxiesForCheck() ([]map[string]any, []string, error) {
 
 	// 解析本地与远程订阅清单
 	subUrls, localNum, remoteNum := resolveSubUrls()
@@ -79,6 +85,7 @@ func GetProxies() ([]map[string]any, error) {
 	// 按订阅顺序预分配槽位,每个 goroutine 只写自己的下标,无竞争
 	// 这样即便是并发获取,最终合并时仍能保持 subUrls 的顺序(本地在前,远程在后)
 	buckets := make([][]map[string]any, len(subUrls))
+	failed := make([]bool, len(subUrls))
 
 	// 启动工作协程
 	for idx, subUrl := range subUrls {
@@ -90,6 +97,7 @@ func GetProxies() ([]map[string]any, error) {
 			defer func() { <-concurrentLimit }() // 释放令牌
 
 			url := e.url
+			failed[i] = true
 			data, err := GetDateFromSubs(url)
 			if err != nil {
 				slog.Error("获取订阅链接错误跳过", "source", e.source, "url", url, "err", err)
@@ -122,6 +130,7 @@ func GetProxies() ([]map[string]any, error) {
 					}
 
 					// 为每个节点添加订阅链接来源信息和备注
+					delete(proxy, "sub_urls") // source attribution is owned by this fetch
 					proxy["sub_url"] = url
 					if tag != "" {
 						proxy["sub_tag"] = tag
@@ -129,6 +138,7 @@ func GetProxies() ([]map[string]any, error) {
 					local = append(local, proxy)
 				}
 				buckets[i] = local
+				failed[i] = len(proxyList) == 0
 				return
 			}
 
@@ -144,8 +154,14 @@ func GetProxies() ([]map[string]any, error) {
 			}
 			slog.Debug("获取订阅链接", "source", e.source, "url", url, "count", len(proxyList))
 			local = make([]map[string]any, 0, len(proxyList))
+			usable := 0
 			for _, proxy := range proxyList {
 				if proxyMap, ok := proxy.(map[string]any); ok {
+					server, _ := proxyMap["server"].(string)
+					if strings.TrimSpace(server) == "" {
+						continue
+					}
+					usable++
 					if t, ok := proxyMap["type"].(string); ok {
 						// 只测试指定协议
 						if len(config.GlobalConfig.NodeType) > 0 && !lo.Contains(config.GlobalConfig.NodeType, t) {
@@ -162,6 +178,7 @@ func GetProxies() ([]map[string]any, error) {
 						}
 					}
 					// 为每个节点添加订阅链接来源信息和备注
+					delete(proxyMap, "sub_urls") // never accept source URLs from a feed
 					proxyMap["sub_url"] = url
 					if tag != "" {
 						proxyMap["sub_tag"] = tag
@@ -170,6 +187,7 @@ func GetProxies() ([]map[string]any, error) {
 				}
 			}
 			buckets[i] = local
+			failed[i] = usable == 0
 		}(idx, subEntry{url: utils.WarpUrl(subUrl.url), source: subUrl.source})
 	}
 
@@ -186,7 +204,13 @@ func GetProxies() ([]map[string]any, error) {
 		mihomoProxies = append(mihomoProxies, b...)
 	}
 
-	return mihomoProxies, nil
+	var failedURLs []string
+	for i, e := range subUrls {
+		if failed[i] {
+			failedURLs = append(failedURLs, utils.WarpUrl(e.url))
+		}
+	}
+	return mihomoProxies, failedURLs, nil
 }
 
 // ListSubUrls returns normalized subscription URLs from local and remote lists.

@@ -21,8 +21,10 @@ const (
 
 // CheckStat is the per-run success count for one subscription URL.
 type CheckStat struct {
-	Total   int
-	Success int
+	Total     int
+	Success   int
+	Qualified int
+	Selected  int
 }
 
 // Stat persists check history for a subscription URL across runs.
@@ -33,6 +35,8 @@ type Stat struct {
 	LastRecheckAt time.Time `json:"lastRecheckAt,omitempty"`
 	LastSuccess   int       `json:"lastSuccess"`
 	LastTotal     int       `json:"lastTotal"`
+	LastQualified int       `json:"lastQualified"`
+	LastSelected  int       `json:"lastSelected"`
 }
 
 // Entry is a subscription row for the admin API.
@@ -40,6 +44,8 @@ type Entry struct {
 	URL           string `json:"url"`
 	LastSuccess   int    `json:"lastSuccess"`
 	LastTotal     int    `json:"lastTotal"`
+	LastQualified int    `json:"lastQualified"`
+	LastSelected  int    `json:"lastSelected"`
 	LastCheckAt   string `json:"lastCheckAt,omitempty"`
 	LastSuccessAt string `json:"lastSuccessAt,omitempty"`
 	LastRecheckAt string `json:"lastRecheckAt,omitempty"`
@@ -117,6 +123,8 @@ func Track(checkStats map[string]CheckStat) {
 		entry.LastCheckAt = now
 		entry.LastTotal = stats.Total
 		entry.LastSuccess = stats.Success
+		entry.LastQualified = stats.Qualified
+		entry.LastSelected = stats.Selected
 		if wasDead {
 			entry.LastRecheckAt = now
 			rechecked++
@@ -215,10 +223,12 @@ func LoadSnapshot(urls []string) Snapshot {
 
 func buildEntry(url string, stat Stat, now time.Time) Entry {
 	entry := Entry{
-		URL:         url,
-		LastSuccess: stat.LastSuccess,
-		LastTotal:   stat.LastTotal,
-		Status:      statusNeverChecked,
+		URL:           url,
+		LastSuccess:   stat.LastSuccess,
+		LastTotal:     stat.LastTotal,
+		LastQualified: stat.LastQualified,
+		LastSelected:  stat.LastSelected,
+		Status:        statusNeverChecked,
 	}
 	if stat.LastCheckAt.IsZero() {
 		return entry

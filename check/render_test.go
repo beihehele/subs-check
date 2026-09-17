@@ -62,7 +62,7 @@ func TestRenderName_RenameOff_WithMediaTags(t *testing.T) {
 			Disney:  &platform.DisneyResult{Unlocked: true, Region: "HK"},
 		}
 		got := RenderName(r, false)
-		want := "🇭🇰香港01|GPT⁺-HK|NF-HK|D+-HK"
+		want := "🇭🇰香港01|GPT⁺-HK|NF-HK"
 		if got != want {
 			t.Errorf("RenderName() = %q, want %q", got, want)
 		}
@@ -192,7 +192,7 @@ func TestRenderName_SubTagAppendedLast(t *testing.T) {
 			Disney: &platform.DisneyResult{Unlocked: true},
 		}
 		got := RenderName(r, false)
-		want := "n|D+|my-sub"
+		want := "n|my-sub"
 		if got != want {
 			t.Errorf("RenderName() = %q, want %q", got, want)
 		}
@@ -320,8 +320,8 @@ func TestRenderNameParts_MatchesRenderName(t *testing.T) {
 		if p.Base != "🇭🇰香港01" || p.SpeedTag != "2.0MB/s" || p.SubTag != "机场A" {
 			t.Errorf("parts = %+v", p)
 		}
-		// Misses are kept so the page can show "not unlocked".
-		want := []MediaTag{{Platform: "openai"}, {Platform: "netflix", Tag: "NF-HK"}, {Platform: "disney"}}
+		// Missing observations stay unknown, rather than claiming a confirmed failure.
+		want := []MediaTag{{Platform: "openai", Status: "unknown"}, {Platform: "netflix", Tag: "NF-HK", Status: "passed"}, {Platform: "disney", Status: "unknown"}}
 		if len(p.Media) != len(want) {
 			t.Fatalf("media = %+v, want %+v", p.Media, want)
 		}

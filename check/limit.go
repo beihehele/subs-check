@@ -18,20 +18,15 @@ type indexedResult struct {
 
 var regionPriority = []string{
 	"HK", "TW", "MO", "SG", "JP", "KR",
-	"US", "CA", "UK", "DE", "FR", "NL", "AU",
+	"US", "CA", "GB", "DE", "FR", "NL", "AU",
 	"IN", "RU", "TR", "VN", "TH", "MY", "PH",
 }
 
 // regionKey returns the grouping key for a result.
 // Priority: Country → proxy name keywords → OTHER.
 func regionKey(r Result) string {
-	if r.Country != "" {
-		return strings.ToUpper(r.Country)
-	}
-	if code := inferRegionFromName(proxyDisplayName(r)); code != "" {
-		return code
-	}
-	return regionOther
+	ResolveRegion(&r)
+	return r.Region
 }
 
 func proxyDisplayName(r Result) string {
@@ -149,7 +144,7 @@ var regionNameKeywords = map[string][]string{
 	"JP": {"日本", "JAPAN", "JP"},
 	"US": {"美国", "UNITED STATES", "USA", "US"},
 	"KR": {"韩国", "KOREA", "KR"},
-	"UK": {"英国", "UNITED KINGDOM", "UK", "GB"},
+	"GB": {"英国", "UNITED KINGDOM", "UK", "GB"},
 	"DE": {"德国", "GERMANY", "DE"},
 	"FR": {"法国", "FRANCE", "FR"},
 	"CA": {"加拿大", "CANADA", "CA"},
@@ -202,13 +197,7 @@ func sortRegionKeys(keys []string) {
 
 // lessResult reports whether a should rank before b (a is better).
 func lessResult(a, b indexedResult, hasSpeed bool) bool {
-	if hasSpeed && a.r.Speed != b.r.Speed {
-		return a.r.Speed > b.r.Speed
-	}
-	if a.r.Latency != b.r.Latency {
-		return a.r.Latency < b.r.Latency
-	}
-	return a.idx < b.idx
+	return qualityLess(a, b, hasSpeed)
 }
 
 func sortIndexed(items []indexedResult, hasSpeed bool) {
@@ -284,7 +273,14 @@ func ApplySuccessLimit(results []Result) []Result {
 	groups, regionKeys := buildRegionGroups(results)
 
 	if limit <= 0 {
+		if config.GlobalConfig.Selection.MaxPerSource > 0 || config.GlobalConfig.Selection.MaxPerIP > 0 {
+			return selectWithPolicy(results, groups, regionKeys)
+		}
 		return flattenRegionGroups(groups, regionKeys)
+	}
+	c := config.GlobalConfig.Selection
+	if c.Mode == "quality" || c.Mode == "hybrid" || c.MaxPerSource > 0 || c.MaxPerIP > 0 || (c.History && c.ExploreSlots > 0) {
+		return selectWithPolicy(results, groups, regionKeys)
 	}
 
 	// Rank regions by best-node quality (better first).

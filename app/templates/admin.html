@@ -333,13 +333,15 @@
                         <thead class="table-light sticky-top">
                             <tr>
                                 <th>订阅链接</th>
-                                <th>成功/总数</th>
+                                <th title="测活通过数，用于失效判定">存活/检测</th>
+                                <th title="通过全部筛选和测速，裁剪前">达标</th>
+                                <th title="最终订阅保留的节点数">入选</th>
                                 <th>末次成功</th>
                                 <th>状态</th>
                             </tr>
                         </thead>
                         <tbody id="subStatsBody">
-                            <tr><td colspan="4" class="text-muted text-center py-3">加载中...</td></tr>
+                            <tr><td colspan="6" class="text-muted text-center py-3">加载中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -751,7 +753,7 @@
         }
 
         function escapeHtml(str) {
-            return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            return String(str == null ? '' : str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
         }
 
         // 为日志添加颜色
@@ -995,16 +997,18 @@
             if (!dom.subStatsBody) return;
             const entries = (data && data.entries) || [];
             if (entries.length === 0) {
-                dom.subStatsBody.innerHTML = '<tr><td colspan="4" class="text-muted text-center py-3">暂无订阅数据</td></tr>';
+                dom.subStatsBody.innerHTML = '<tr><td colspan="6" class="text-muted text-center py-3">暂无订阅数据</td></tr>';
                 return;
             }
             dom.subStatsBody.innerHTML = entries.map(item => {
-                const status = item.status || 'never_checked';
+                const status = Object.prototype.hasOwnProperty.call(SUB_STATUS_LABELS, item.status) ? item.status : 'never_checked';
                 const label = SUB_STATUS_LABELS[status] || status;
                 return '<tr>' +
-                    '<td class="url-cell" title="' + item.url + '">' + item.url + '</td>' +
+                    '<td class="url-cell" title="' + escapeHtml(item.url) + '">' + item.url + '</td>' +
                     '<td>' + (item.lastSuccess || 0) + '/' + (item.lastTotal || 0) + '</td>' +
-                    '<td>' + formatTime(item.lastSuccessAt) + '</td>' +
+                    '<td>' + (item.lastQualified || 0) + '</td>' +
+                    '<td>' + (item.lastSelected || 0) + '</td>' +
+                    '<td>' + escapeHtml(formatTime(item.lastSuccessAt)) + '</td>' +
                     '<td><span class="sub-status-badge sub-status-' + status + '">' + label + '</span></td>' +
                     '</tr>';
             }).join('');
@@ -1020,7 +1024,7 @@
             .catch(error => {
                 console.error('获取订阅统计失败:', error);
                 if (dom.subStatsBody) {
-                    dom.subStatsBody.innerHTML = '<tr><td colspan="4" class="text-danger text-center py-3">加载失败</td></tr>';
+                    dom.subStatsBody.innerHTML = '<tr><td colspan="6" class="text-danger text-center py-3">加载失败</td></tr>';
                 }
             });
         }

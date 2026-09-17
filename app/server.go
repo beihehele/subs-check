@@ -296,6 +296,15 @@ func (app *App) updateConfig(c *gin.Context) {
 	}
 
 	// 写入新配置
+	validated := config.Defaults()
+	if err := yaml.Unmarshal([]byte(req.Content), validated); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("配置格式错误: %v", err)})
+		return
+	}
+	if err := validated.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err := os.WriteFile(app.configPath, []byte(req.Content), 0644); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("保存配置文件失败: %v", err)})
 		return

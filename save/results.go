@@ -31,23 +31,27 @@ type ResultsSnapshot struct {
 // NodeRecord is one node on the results page.
 // Fields are whitelisted so credentials (password, uuid, private-key...) never get in.
 type NodeRecord struct {
-	Name     string           `json:"name"`     // display name, same as all.yaml
-	BaseName string           `json:"baseName"` // name without speed/media tags
-	Type     string           `json:"type"`
-	Server   string           `json:"server"`
-	Port     string           `json:"port"`
-	SNI      string           `json:"sni,omitempty"`
-	TLS      bool             `json:"tls"`
-	Reality  bool             `json:"reality,omitempty"`
-	UDP      bool             `json:"udp"`
-	Network  string           `json:"network"`
-	Speed    int              `json:"speed"` // KB/s, 0 if not tested
-	Country  string           `json:"country,omitempty"`
-	IP       string           `json:"ip,omitempty"`
-	IPRisk   string           `json:"ipRisk,omitempty"`
-	Media    []check.MediaTag `json:"media,omitempty"` // per platform in config order, when media check is on
-	SubTag   string           `json:"subTag,omitempty"`
-	Details  []NodeDetail     `json:"details,omitempty"`
+	Name         string           `json:"name"`     // display name, same as all.yaml
+	BaseName     string           `json:"baseName"` // name without speed/media tags
+	Type         string           `json:"type"`
+	Server       string           `json:"server"`
+	Port         string           `json:"port"`
+	SNI          string           `json:"sni,omitempty"`
+	TLS          bool             `json:"tls"`
+	Reality      bool             `json:"reality,omitempty"`
+	UDP          bool             `json:"udp"`
+	Network      string           `json:"network"`
+	Speed        int              `json:"speed"` // KB/s, 0 if not tested
+	Country      string           `json:"country,omitempty"`
+	Region       string           `json:"region,omitempty"`
+	RegionSource string           `json:"regionSource,omitempty"`
+	Reliability  float64          `json:"reliability,omitempty"`
+	Observations int              `json:"observations,omitempty"`
+	IP           string           `json:"ip,omitempty"`
+	IPRisk       string           `json:"ipRisk,omitempty"`
+	Media        []check.MediaTag `json:"media,omitempty"` // per platform in config order, when media check is on
+	SubTag       string           `json:"subTag,omitempty"`
+	Details      []NodeDetail     `json:"details,omitempty"`
 }
 
 // NodeDetail is one extra proxy parameter shown in the detail panel.
@@ -87,17 +91,21 @@ func newNodeRecord(r check.Result, parts check.NameParts) NodeRecord {
 	p := r.Proxy
 	typ := proxyString(p, "type")
 	rec := NodeRecord{
-		Name:     parts.String(),
-		BaseName: parts.Base,
-		Type:     typ,
-		Server:   proxyString(p, "server"),
-		Port:     proxyString(p, "port"),
-		Network:  proxyString(p, "network"),
-		Speed:    r.Speed,
-		Country:  r.Country,
-		IP:       r.IP,
-		IPRisk:   r.IPRisk,
-		SubTag:   parts.SubTag,
+		Name:         parts.String(),
+		BaseName:     parts.Base,
+		Type:         typ,
+		Server:       proxyString(p, "server"),
+		Port:         proxyString(p, "port"),
+		Network:      proxyString(p, "network"),
+		Speed:        r.Speed,
+		Country:      r.Country,
+		Region:       r.Region,
+		RegionSource: r.RegionSource,
+		Reliability:  r.Reliability,
+		Observations: r.Observations,
+		IP:           r.IP,
+		IPRisk:       r.IPRisk,
+		SubTag:       parts.SubTag,
 	}
 	if v, ok := lookup(p, "reality-opts"); ok {
 		if m, ok := v.(map[string]any); ok && len(m) > 0 {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/beihehele/subs-check/config"
 	"github.com/beihehele/subs-check/save/method"
+	"github.com/beihehele/subs-check/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,11 +26,10 @@ func SaveHistory(yamlData []byte) {
 	if dir == "" {
 		return
 	}
-	os.MkdirAll(dir, 0755)
 
 	filename := fmt.Sprintf("%s%s.yaml", historyPrefix, time.Now().Format(historyTimeFormat))
 	path := filepath.Join(dir, filename)
-	if err := os.WriteFile(path, yamlData, 0644); err != nil {
+	if err := utils.WriteFileAtomic(path, yamlData); err != nil {
 		slog.Error(fmt.Sprintf("保存历史快照失败: %v", err))
 		return
 	}
@@ -48,6 +48,12 @@ func LoadHistoryProxies() []map[string]any {
 	files, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil
+	}
+	// Read legacy public history during migration; new snapshots are private
+	// because source attribution contains subscription credentials.
+	if saver, err := method.NewLocalSaver(); err == nil {
+		legacy, _ := filepath.Glob(filepath.Join(saver.OutputPath, historyDir, historyPrefix+"*.yaml"))
+		files = append(files, legacy...)
 	}
 
 	var allProxies []map[string]any
@@ -94,9 +100,5 @@ func loadProxiesFromYaml(path string) []map[string]any {
 }
 
 func getHistoryDir() string {
-	saver, err := method.NewLocalSaver()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(saver.OutputPath, historyDir)
+	return filepath.Join(utils.CacheDir(), historyDir)
 }

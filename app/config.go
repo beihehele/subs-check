@@ -38,9 +38,14 @@ func (app *App) loadConfig() error {
 		return fmt.Errorf("读取配置文件失败: %w", err)
 	}
 
-	if err := yaml.Unmarshal(yamlFile, config.GlobalConfig); err != nil {
+	next := config.Defaults()
+	if err := yaml.Unmarshal(yamlFile, next); err != nil {
 		return fmt.Errorf("解析配置文件失败: %w", err)
 	}
+	if err := next.Validate(); err != nil {
+		return fmt.Errorf("配置验证失败: %w", err)
+	}
+	*config.GlobalConfig = *next
 
 	slog.Info("配置文件读取成功")
 	return nil

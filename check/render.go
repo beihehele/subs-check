@@ -25,24 +25,37 @@ func RenderName(r Result, includeSpeed bool) string {
 // "base|speed|media...|sub_tag". Rendering is pure; final sequence numbers are
 // assigned only by AssignDisplayNames in output order.
 type NameParts struct {
+	Stable   bool // omit changing tags from the subscription identity
 	Base     string
 	SpeedTag string     // set when includeSpeed and the node has a speed
 	Media    []MediaTag // config.Platforms order; misses kept with an empty Tag
 	SubTag   string
 }
 
-// MediaTag is one platform's result; an empty Tag means not unlocked.
+// MediaTag is one platform result; Status distinguishes failure from uncertainty.
 type MediaTag struct {
 	Platform string `json:"platform"`
 	Tag      string `json:"tag"`
+	Status   string `json:"status,omitempty"`
 }
 
 func (p NameParts) String() string {
+	if p.Stable {
+		return p.Base
+	}
+	return p.TaggedString()
+}
+
+func (p NameParts) TaggedString() string {
 	var tags []string
 	if p.SpeedTag != "" {
 		tags = append(tags, p.SpeedTag)
 	}
 	for _, m := range p.Media {
+		switch m.Platform {
+		case "disney", "gemini", "claude", "spotify":
+			continue
+		}
 		if m.Tag != "" {
 			tags = append(tags, m.Tag)
 		}
@@ -63,14 +76,24 @@ func RenderNameParts(r Result, includeSpeed bool) NameParts {
 
 func renderNameParts(r Result, includeSpeed bool, seq int) NameParts {
 	var p NameParts
+	ResolveRegion(&r)
 
 	// 1. base 名字
 	// RenameNode 是"强覆盖合约":只要开了就用 FormatRename 覆盖原名,
-	// Country 为空时走 ❓Other 兜底；预览时不分配序号。
+	// 出口地区未知时尝试原名主体推断，再走 ❓Other 兜底；预览时不分配序号。
 	// 这样能确保上游订阅里已有的 |speed|media 尾缀不会透传进来再被叠加,
 	// 否则在 IP 查询失败(免费节点常见)的节点上会出现重复标签。
 	if config.GlobalConfig.RenameNode {
-		p.Base = config.GlobalConfig.NodePrefix + proxyutils.FormatRename(r.Country, seq)
+		p.Base = config.GlobalConfig.NodePrefix + proxyutils.FormatRename(r.Region, seq)
+		if config.GlobalConfig.NameMode == "stable" {
+			p.Stable = true
+			// A fixed SC prefix avoids name churn when exit geolocation changes.
+			id := proxyutils.NodeID(r.Proxy)
+			if len(id) > 16 {
+				id = id[:16]
+			}
+			p.Base = config.GlobalConfig.NodePrefix + "SC-" + id
+		}
 	} else if r.Proxy != nil {
 		if n, ok := r.Proxy["name"].(string); ok {
 			p.Base = strings.TrimSpace(n)
@@ -84,7 +107,14 @@ func renderNameParts(r Result, includeSpeed bool, seq int) NameParts {
 
 	// 3. 按 config.Platforms 顺序收集媒体标签
 	for _, plat := range config.GlobalConfig.Platforms {
-		p.Media = append(p.Media, MediaTag{Platform: plat, Tag: mediaTagFor(plat, &r)})
+		tag, status := mediaTagFor(plat, &r), r.MediaStates[plat]
+		if status == "" {
+			status = "unknown"
+			if tag != "" {
+				status = "passed"
+			}
+		}
+		p.Media = append(p.Media, MediaTag{Platform: plat, Tag: tag, Status: status})
 	}
 
 	// 4. sub_tag 追加到最后
@@ -101,7 +131,23 @@ func renderNameParts(r Result, includeSpeed bool, seq int) NameParts {
 // Returned parts correspond to the original result indices, so snapshots and
 // subscriptions share exactly the same names without rendering mutated names.
 func AssignDisplayNames(results []Result) []NameParts {
+	for i := range results {
+		ResolveRegion(&results[i])
+	}
 	parts := make([]NameParts, len(results))
+	ids := make(map[string]string)
+	collisions := make(map[string]bool)
+	for _, r := range results {
+		id := proxyutils.NodeID(r.Proxy)
+		if len(id) < 16 {
+			continue
+		}
+		short := id[:16]
+		if prev, ok := ids[short]; ok && prev != id {
+			collisions[short] = true
+		}
+		ids[short] = id
+	}
 	regionSeq := make(map[string]int)
 	for _, idx := range OutputOrderIndices(results) {
 		r := results[idx]
@@ -110,11 +156,17 @@ func AssignDisplayNames(results []Result) []NameParts {
 		}
 		seq := 0
 		if config.GlobalConfig.RenameNode {
-			key := proxyutils.RenameSeqKey(r.Country)
+			key := proxyutils.RenameSeqKey(r.Region)
 			regionSeq[key]++
 			seq = regionSeq[key]
 		}
 		parts[idx] = renderNameParts(r, true, seq)
+		if parts[idx].Stable {
+			id := proxyutils.NodeID(r.Proxy)
+			if len(id) >= 16 && collisions[id[:16]] {
+				parts[idx].Base = config.GlobalConfig.NodePrefix + "SC-" + id
+			}
+		}
 		results[idx].Proxy["name"] = parts[idx].String()
 	}
 	return parts
@@ -124,6 +176,10 @@ func AssignDisplayNames(results []Result) []NameParts {
 // 新增平台时只需在这里加一个 case 和对应的 Result 字段。
 func mediaTagFor(plat string, r *Result) string {
 	switch plat {
+	case "telegram":
+		if r.Telegram != nil && r.Telegram.Reachable {
+			return "TG"
+		}
 	case "openai":
 		if r.Openai != nil {
 			if r.Openai.Full {

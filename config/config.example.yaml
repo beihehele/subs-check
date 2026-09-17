@@ -8,7 +8,7 @@ media-concurrent: 20
 # 测速并发数（默认等于concurrent）
 # 建议设置较低值，避免并发抢带宽导致测速不准
 speed-concurrent: 2
-# 是否打乱节点的测试顺序（仅影响测试先后，输出顺序保持订阅原序不变）
+# 是否打乱节点的测试顺序（仅影响检测先后，最终仍按地区与质量策略输出）
 # 开启后可避免同机场相邻节点、同节点的多个协议被扎堆在同一时间窗口测试，
 # 从而降低相邻IP一起出问题、互相干扰的概率
 shuffle-test-order: true
@@ -25,10 +25,23 @@ check-interval: 180
 cron-expression: "0 */3 * * *"
 
 # 最终保留的成功节点数量（0=不裁剪，但仍按地区分组、组内排序输出）
-# 全部检测完成后：按 Country 分组（需 rename-node 或 iprisk），组内按测速降序、延迟升序
-# 在 limit 内尽量按地区平均分配；余数优先补给节点质量更好的地区
-# 若地区数 > limit，严格不超过 limit，按各地区最优节点质量保留前 limit 个地区
+# 全部检测完成后按下方 selection 分配名额；最终按地区分组输出
+# 未配置 selection 时使用旧版地区均衡、组内速度优先策略
 success-limit: 20
+
+# 名额分配：balanced=地区均衡（兼容旧配置）；quality=全局择优；hybrid=地区保底后加权择优
+# 同分时，显式 sort 使用固定节点 ID；未配置 sort 时保留旧版输入顺序
+selection:
+  mode: hybrid
+  sort: balanced         # balanced=稳定性档位→100ms延迟档位→速度；speed/latency=对应指标优先
+  preferred-regions: [HK, SG, JP, US]
+  min-per-region: 2      # hybrid 保底；名额不足时按上述地区顺序轮流分配
+  region-weights: {HK: 2, SG: 2, JP: 1, US: 1}
+  max-per-source: 0      # 0=不限；同节点的每个订阅来源均计入，硬上限优先于保底
+  max-per-ip: 0          # 0=不限；按已测出口 IP 限制，未知 IP 不合并
+  history: true         # 私有缓存记录最近30天的质量；跨轮采用0.3权重的指数平滑
+  explore-slots: 2      # 为不足3次检测的新节点保留名额；仍必须通过本轮全部筛选
+
 
 # 超时时间(毫秒)(节点的最大延迟)
 timeout: 5000
@@ -42,6 +55,10 @@ alive-test-url: http://gstatic.com/generate_204
 speed-test-url: https://hub.dayanjing.us.kg/speedtest?bytes=100000000
 # 最低测速结果舍弃(KB/s)
 min-speed: 1024
+# 有效测速样本最少 KB（0 使用64KB）；拒绝非200/206响应、过小样本及异常断流
+speed-min-sample-kb: 64
+# 对最低速度阈值±20%内的有效样本再测2次，按3次中位数判定
+speed-retest: true
 # 下载测试时间(s)(与下载链接大小相关，默认最大测试10s)
 download-timeout: 10
 # 单节点测速下载数据大小(MB)限制，0为不限
@@ -58,6 +75,9 @@ listen-port: ":8199"
 # 以节点IP查询位置重命名节点
 # 质量差的节点可能造成IP查询失败，造成整体检查速度稍微变慢，默认true
 rename-node: true
+# compact 保留地区序号和动态标签；stable 使用 SC-<固定ID>，不拼接动态标签和订阅备注
+# stable 需要 rename-node: true；速度/媒体结果仍可在结果页查看
+name-mode: compact
 # 节点前缀，依赖rename-node为true才生效
 node-prefix: ""
 
@@ -72,6 +92,7 @@ node-type:
 # 注意：过滤在流媒体检测+重命名之后、测速之前进行。此时节点名称已包含
 #       国家和媒体标签（如 NF-US、GPT⁺、IP 风险百分比），但**不包含速度标签**。
 #       速度标签在测速通过后追加，不参与过滤。
+# 多条 filter 为 OR；无效正则拒绝应用。优先使用下方结构化规则避免名称/备注误匹配
 filter:
   # === 按地区过滤 ===
   # - "香港|HK|Hong Kong"        # 保留香港节点
@@ -85,31 +106,35 @@ filter:
   # === 按平台解锁过滤（需开启 media-check）===
   # - "GPT⁺|GPT"                 # 保留解锁 OpenAI 的节点
   # - "NF"                       # 保留解锁 Netflix 的节点（NF=仅自制剧, NF-US=全解锁）
-  # - "GM"                       # 保留解锁 Gemini 的节点
-  # - "D\\+"                     # 保留解锁 Disney+ 的节点（D+=解锁但未知地区, D+-US=解锁并知道地区）
   # - "YT-"                      # 保留解锁 YouTube Premium 的节点
-  # - "CL-"                      # 保留解锁 Claude 的节点
-  # - "SP-"                      # 保留解锁 Spotify 的节点
-  # - "TG-"                      # 保留解锁 Telegram 的节点
+  # - "TG"                      # 保留 Telegram 原生握手可达的节点
 
-# 是否开启流媒体检测，其中IP欺诈依赖重命名
+# 结构化筛选：不同字段 AND；地区/协议列表内部 OR；平台列表要求全部通过
+# 未知检测结果不能满足 require-platforms 或 max-ip-risk
+node-filter:
+  regions: []                 # 例如 [HK, SG]；GB/UK 自动统一，名称推断地区标为 name
+  protocols: []               # 例如 [vless, trojan]
+  max-latency: 0              # 毫秒；0=不限
+  # max-ip-risk: 50           # 省略=不限，需要 media-check 和 iprisk
+  require-platforms: []       # 例如 [openai, telegram]，需同时在 platforms 中启用
+  name-include: ""            # 原名称的前置正则；为空不限制
+  name-exclude: ""            # 原名称排除正则；为空不限制
+
+# 是否开启平台检测；IP风险需要在 platforms 中启用 iprisk
 media-check: true
 # 流媒体检测超时时间(秒)，未设置则默认为10秒
 media-check-timeout: 10
 platforms:
+  # Telegram 通过节点进行 MTProto 无登录握手，成功显示 TG；不代表登录/语音可用
   - iprisk
   - tiktok
   - youtube
   - netflix
-  - disney
   - openai
-  - gemini
-  - claude
-  - spotify
   - telegram
 
 # 保留最近N天内可用的历史节点（天）
-# 开启后每次检测会保存节点快照到 output/history/ 目录
+# 开启后每次检测保存到配置文件旁 cache/<配置名>/history/ 私有目录（兼容读取旧 output/history）
 # 下次检测时会将历史节点加入待测队列重新检测，通过的节点才会保留到输出中
 # 过期的历史文件会自动清理
 # 0 = 关闭此功能

@@ -9,6 +9,7 @@ import (
 	"github.com/beihehele/subs-check/check"
 	"github.com/beihehele/subs-check/config"
 	"github.com/beihehele/subs-check/export"
+	proxyutils "github.com/beihehele/subs-check/proxy"
 	"github.com/beihehele/subs-check/save/method"
 	"github.com/beihehele/subs-check/utils"
 	"gopkg.in/yaml.v3"
@@ -40,7 +41,7 @@ func SaveConfig(results []check.Result) {
 
 	// ① 先写 history,此时 proxy["name"] 仍是原始值,history yaml 天然干净
 	if config.GlobalConfig.KeepDays > 0 {
-		historyYamlData, err := marshalProxies(results)
+		historyYamlData, err := marshalHistoryProxies(results)
 		if err != nil {
 			slog.Error(fmt.Sprintf("序列化历史快照失败: %v", err))
 		} else {
@@ -113,7 +114,9 @@ func marshalProxies(results []check.Result) ([]byte, error) {
 	ordered := check.SortResultsByRegion(results)
 	proxies := make([]map[string]any, 0, len(ordered))
 	for _, result := range ordered {
-		proxies = append(proxies, result.Proxy)
+		if result.Proxy != nil {
+			proxies = append(proxies, proxyutils.PublicProxy(result.Proxy))
+		}
 	}
 	if len(proxies) == 0 {
 		return nil, fmt.Errorf("没有可用的代理节点")
@@ -178,4 +181,15 @@ func newRemoteSaver() (SaveFunc, error) {
 	default:
 		return nil, fmt.Errorf("未知的保存方法: %s", config.GlobalConfig.SaveMethod)
 	}
+}
+
+// History keeps source attribution in its private directory; public outputs strip it.
+func marshalHistoryProxies(results []check.Result) ([]byte, error) {
+	proxies := make([]map[string]any, 0, len(results))
+	for _, r := range results {
+		if r.Proxy != nil {
+			proxies = append(proxies, r.Proxy)
+		}
+	}
+	return yaml.Marshal(map[string]any{"proxies": proxies})
 }

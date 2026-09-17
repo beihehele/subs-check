@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -18,7 +19,6 @@ import (
 	"github.com/beihehele/subs-check/check/platform"
 	"github.com/beihehele/subs-check/config"
 	proxyutils "github.com/beihehele/subs-check/proxy"
-	"github.com/beihehele/subs-check/substats"
 	"github.com/juju/ratelimit"
 	"github.com/metacubex/mihomo/adapter"
 	_ "github.com/metacubex/mihomo/config" // init() sets dns.ParseNameServer, required by ParseProxy
@@ -27,22 +27,30 @@ import (
 
 // Result 存储节点检测结果
 type Result struct {
-	Proxy      map[string]any
-	Openai     *platform.OpenAIResult
-	Youtube    string
-	Netflix    *platform.NetflixResult
-	Google     bool
-	Cloudflare bool
-	Disney     *platform.DisneyResult
-	Gemini     string
-	TikTok     string
-	Claude     string
-	Spotify    string
-	IP         string
-	IPRisk     string
-	Country    string
-	Speed      int // KB/s, 0 表示未测速或测速未通过
-	Latency    int // ms, 测活请求耗时
+	Proxy           map[string]any
+	Openai          *platform.OpenAIResult
+	Youtube         string
+	Netflix         *platform.NetflixResult
+	Google          bool
+	Cloudflare      bool
+	Disney          *platform.DisneyResult
+	Gemini          string
+	TikTok          string
+	Claude          string
+	Spotify         string
+	IP              string
+	IPRisk          string
+	Country         string
+	Region          string // canonical grouping region, frozen before rendering
+	RegionSource    string // measured, name, unknown
+	Telegram        *platform.TelegramResult
+	MediaStates     map[string]string
+	Reliability     float64
+	Observations    int
+	SmoothedSpeed   float64
+	SmoothedLatency float64
+	Speed           int // KB/s, 0 表示未测速或测速未通过
+	Latency         int // ms, 测活请求耗时
 }
 
 // aliveResult 存活检测通过的中间结果
@@ -56,10 +64,13 @@ type aliveResult struct {
 // MediaDone / FilterPassed / SpeedDone / SpeedOk) so both the CLI progress
 // UI and the web admin API can read them without plumbing through a pointer.
 type ProxyChecker struct {
-	results    []Result
-	proxyCount int
-	progress   int32 // alive-stage done count; shared with showProgress
-	available  int32 // alive-stage pass count;  shared with showProgress
+	alivePassed      []bool
+	aliveChecked     []bool
+	subscriptionURLs []string
+	results          []Result
+	proxyCount       int
+	progress         int32 // alive-stage done count; shared with showProgress
+	available        int32 // alive-stage pass count;  shared with showProgress
 }
 
 var Progress atomic.Uint32
@@ -168,6 +179,9 @@ func effectiveConcurrency(phaseConcurrency, fallback, itemCount int) int {
 
 // Check 执行代理检测的主函数
 func Check() ([]Result, error) {
+	if err := config.GlobalConfig.Validate(); err != nil {
+		return nil, err
+	}
 	ProxyCount.Store(0)
 	Available.Store(0)
 	Progress.Store(0)
@@ -181,7 +195,7 @@ func Check() ([]Result, error) {
 		slog.Info(fmt.Sprintf("添加历史待测节点，数量: %d", len(config.GlobalProxies)))
 		proxies = append(proxies, config.GlobalProxies...)
 	}
-	tmp, err := proxyutils.GetProxies()
+	tmp, failedURLs, err := proxyutils.GetProxiesForCheck()
 	if err != nil {
 		return nil, fmt.Errorf("获取节点失败: %w", err)
 	}
@@ -195,7 +209,8 @@ func Check() ([]Result, error) {
 	slog.Info(fmt.Sprintf("去重后节点数量: %d", len(proxies)))
 
 	checker := &ProxyChecker{
-		results: make([]Result, 0),
+		results:          make([]Result, 0),
+		subscriptionURLs: failedURLs,
 	}
 	return checker.run(proxies)
 }
@@ -204,6 +219,11 @@ func Check() ([]Result, error) {
 // Stages run concurrently, connected by channels. SuccessLimit is applied after
 // the full pipeline finishes (region grouping + trim in ApplySuccessLimit).
 func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
+	if err := config.GlobalConfig.Validate(); err != nil {
+		return nil, err
+	}
+	pc.alivePassed = make([]bool, len(proxies))
+	pc.aliveChecked = make([]bool, len(proxies))
 	if config.GlobalConfig.TotalSpeedLimit != 0 {
 		Bucket = ratelimit.NewBucketWithRate(float64(config.GlobalConfig.TotalSpeedLimit*1024*1024), int64(config.GlobalConfig.TotalSpeedLimit*1024*1024/10))
 	} else {
@@ -245,8 +265,7 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 		slog.Info(fmt.Sprintf("应用节点过滤规则，共 %d 个正则表达式", len(patterns)))
 	}
 
-	// Whole-pipeline cancellation: collector pulls the trigger on SuccessLimit,
-	// RequestCancel pulls it on external SIGHUP / HTTP force-close.
+	// Cancellation is only requested externally; selection happens after all checks.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer installPhaseCancel(cancel)()
 
@@ -257,7 +276,7 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 	collectIn := make(chan pipelineItem, speedConcurrency)
 
 	if config.GlobalConfig.ShuffleTestOrder {
-		slog.Info("已打乱节点测试顺序，输出仍保持订阅原序")
+		slog.Info("已打乱节点测试顺序，最终按地区和质量策略输出")
 	}
 
 	// Dispatcher
@@ -320,7 +339,17 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 			pc.results = append(pc.results, *r)
 		}
 	}
-	pc.results = ApplySuccessLimit(pc.results)
+	qualified := pc.results
+	for i := range qualified {
+		ResolveRegion(&qualified[i])
+	}
+	if ctx.Err() == nil {
+		updateQualityHistory(proxies, pc.aliveChecked, pc.alivePassed, qualified)
+	}
+	pc.results = ApplySuccessLimit(qualified)
+	if ctx.Err() == nil {
+		pc.trackSubscriptions(proxies, qualified)
+	}
 
 	if config.GlobalConfig.PrintProgress {
 		done <- true
@@ -335,8 +364,6 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 	}
 	slog.Info(fmt.Sprintf("可用节点数量: %d", len(pc.results)))
 	slog.Info(fmt.Sprintf("测试总消耗流量: %.3fGB", float64(TotalBytes.Load())/1024/1024/1024))
-
-	pc.checkSubscriptionSuccessRate(proxies)
 
 	return pc.results, nil
 }
@@ -415,12 +442,18 @@ func (pc *ProxyChecker) startAliveWorkers(ctx context.Context, n int, in <-chan 
 				if ctx.Err() != nil {
 					return
 				}
+				if !matchesInputFilter(t.proxy) {
+					pc.incrementProgress()
+					continue
+				}
 				r := pc.checkAlive(t.proxy)
+				pc.aliveChecked[t.idx] = true
 				pc.incrementProgress()
 				if r == nil {
 					continue
 				}
 				pc.incrementAvailable()
+				pc.alivePassed[t.idx] = true
 				select {
 				case <-ctx.Done():
 					return
@@ -456,6 +489,10 @@ func (pc *ProxyChecker) startMediaWorkers(
 			for entry := range in {
 				if ctx.Err() != nil {
 					return
+				}
+				if max := config.GlobalConfig.NodeFilter.MaxLatency; max > 0 && entry.a.Latency > max {
+					MediaDone.Add(1)
+					continue
 				}
 				res := pc.checkMedia(entry.a)
 				MediaDone.Add(1)
@@ -554,6 +591,25 @@ func (pc *ProxyChecker) checkSpeed(r Result, speedTestURL string) *Result {
 	defer httpClient.Close()
 
 	speed, _, err := platform.CheckSpeed(httpClient.Client, Bucket, httpClient.BytesRead, speedTestURL)
+	// Recheck borderline samples on fresh connections; median avoids promoting
+	// a single transient spike. Do not retry HTTP errors or invalid samples.
+	if err == nil && config.GlobalConfig.SpeedRetest && config.GlobalConfig.MinSpeed > 0 && speed >= config.GlobalConfig.MinSpeed*8/10 && speed <= config.GlobalConfig.MinSpeed*12/10 {
+		samples := []int{speed}
+		for i := 0; i < 2; i++ {
+			client := CreateClient(r.Proxy)
+			if client == nil {
+				return nil
+			}
+			sample, _, sampleErr := platform.CheckSpeed(client.Client, Bucket, client.BytesRead, speedTestURL)
+			client.Close()
+			if sampleErr != nil {
+				return nil
+			}
+			samples = append(samples, sample)
+		}
+		sort.Ints(samples)
+		speed = samples[1]
+	}
 	if err != nil || speed < config.GlobalConfig.MinSpeed {
 		return nil
 	}
@@ -566,120 +622,85 @@ func (pc *ProxyChecker) checkSpeed(r Result, speedTestURL string) *Result {
 // 不会丢弃节点,不会修改 proxy["name"];检测结果写入 Result 的结构化字段。
 // Counter updates are owned by the caller (media pipeline worker).
 func (pc *ProxyChecker) checkMedia(a aliveResult) *Result {
-	res := &Result{Proxy: a.Proxy, Latency: a.Latency}
-
+	res := &Result{Proxy: a.Proxy, Latency: a.Latency, MediaStates: make(map[string]string)}
+	defer ResolveRegion(res)
 	if os.Getenv("SUB_CHECK_SKIP") != "" {
 		return res
 	}
-
 	httpClient := CreateClient(a.Proxy)
 	if httpClient == nil {
 		return res
 	}
 	defer httpClient.Close()
-
 	if config.GlobalConfig.MediaCheck {
-		mediaTimeout := config.GlobalConfig.MediaCheckTimeout
-		if mediaTimeout <= 0 {
-			mediaTimeout = 10
+		timeout := config.GlobalConfig.MediaCheckTimeout
+		if timeout <= 0 {
+			timeout = 10
 		}
-		mediaClient := &http.Client{
-			Transport: httpClient.Client.Transport,
-			Timeout:   time.Duration(mediaTimeout) * time.Second,
-		}
-
-		// 并行检测所有平台
-		var mediaWg sync.WaitGroup
+		mediaClient := &http.Client{Transport: httpClient.Transport, Timeout: time.Duration(timeout) * time.Second}
+		var wg sync.WaitGroup
+		var mu sync.Mutex
 		for _, plat := range config.GlobalConfig.Platforms {
-			switch plat {
-			case "openai":
-				mediaWg.Add(1)
-				go func() {
-					defer mediaWg.Done()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var err error
+				switch plat {
+				case "openai":
 					res.Openai = platform.CheckOpenAI(mediaClient)
-				}()
-			case "youtube":
-				mediaWg.Add(1)
-				go func() {
-					defer mediaWg.Done()
-					if region, _ := platform.CheckYoutube(mediaClient); region != "" {
-						res.Youtube = region
-					}
-				}()
-			case "netflix":
-				mediaWg.Add(1)
-				go func() {
-					defer mediaWg.Done()
-					nf, _ := platform.CheckNetflix(mediaClient)
-					res.Netflix = nf
-				}()
-			case "disney":
-				mediaWg.Add(1)
-				go func() {
-					defer mediaWg.Done()
-					d, _ := platform.CheckDisney(mediaClient)
-					res.Disney = d
-				}()
-			case "gemini":
-				mediaWg.Add(1)
-				go func() {
-					defer mediaWg.Done()
-					if region, _ := platform.CheckGemini(mediaClient); region != "" {
-						res.Gemini = region
-					}
-				}()
-			case "claude":
-				mediaWg.Add(1)
-				go func() {
-					defer mediaWg.Done()
-					if region, _ := platform.CheckClaude(mediaClient); region != "" {
-						res.Claude = region
-					}
-				}()
-			case "spotify":
-				mediaWg.Add(1)
-				go func() {
-					defer mediaWg.Done()
-					if region, _ := platform.CheckSpotify(mediaClient); region != "" {
-						res.Spotify = region
-					}
-				}()
-			case "iprisk":
-				mediaWg.Add(1)
-				go func() {
-					defer mediaWg.Done()
-					country, ip := proxyutils.GetProxyCountry(mediaClient)
-					if ip == "" {
-						return
-					}
-					res.IP = ip
-					res.Country = country
-					risk, err := platform.CheckIPRisk(mediaClient, ip)
-					if err == nil {
-						res.IPRisk = risk
+				case "youtube":
+					res.Youtube, err = platform.CheckYoutube(mediaClient)
+				case "netflix":
+					res.Netflix, err = platform.CheckNetflix(mediaClient)
+				case "disney":
+					res.Disney, err = platform.CheckDisney(mediaClient)
+				case "gemini":
+					res.Gemini, err = platform.CheckGemini(mediaClient)
+				case "claude":
+					res.Claude, err = platform.CheckClaude(mediaClient)
+				case "spotify":
+					res.Spotify, err = platform.CheckSpotify(mediaClient)
+				case "tiktok":
+					res.TikTok, err = platform.CheckTikTok(mediaClient)
+				case "telegram":
+					ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+					defer cancel()
+					res.Telegram, err = platform.CheckTelegram(ctx, httpClient.Transport.(*http.Transport).DialContext)
+				case "iprisk":
+					res.Country, res.IP = proxyutils.GetProxyCountry(mediaClient)
+					if res.IP != "" {
+						res.IPRisk, err = platform.CheckIPRisk(mediaClient, res.IP)
 					} else {
-						slog.Debug(fmt.Sprintf("查询IP风险失败: %v", err))
+						err = fmt.Errorf("出口 IP 查询失败")
 					}
-				}()
-			case "tiktok":
-				mediaWg.Add(1)
-				go func() {
-					defer mediaWg.Done()
-					if region, _ := platform.CheckTikTok(mediaClient); region != "" {
-						res.TikTok = region
-					}
-				}()
-			}
+				}
+				state := "unknown"
+				if err == nil && mediaTagFor(plat, res) != "" {
+					state = "passed"
+				}
+				// Some legacy probes return empty results on network errors. Keep these
+				// unknown instead of presenting a transport failure as confirmed blocking.
+				if err == nil && plat == "disney" && res.Disney != nil && (res.Disney.Banned || res.Disney.Soon) {
+					state = "failed"
+				}
+				if err == nil && plat == "netflix" && res.Netflix != nil && res.Netflix.Banned {
+					state = "failed"
+				}
+				mu.Lock()
+				res.MediaStates[plat] = state
+				mu.Unlock()
+			}()
 		}
-		mediaWg.Wait()
+		wg.Wait()
 	}
-
-	// 如果没有通过 iprisk 得到 Country，而 RenameNode 开启，则显式查一次国家
-	if res.Country == "" && config.GlobalConfig.RenameNode {
-		country, _ := proxyutils.GetProxyCountry(httpClient.Client)
+	needsRegion := config.GlobalConfig.RenameNode || len(config.GlobalConfig.NodeFilter.Regions) > 0 || config.GlobalConfig.Selection.Mode == "hybrid" || config.GlobalConfig.Selection.MaxPerIP > 0
+	if res.Country == "" && needsRegion {
+		country, ip := proxyutils.GetProxyCountry(httpClient.Client)
 		res.Country = country
+		if res.IP == "" {
+			res.IP = ip
+		}
 	}
-
 	return res
 }
 
@@ -726,84 +747,6 @@ func (pc *ProxyChecker) resetPhaseCounters(count int) {
 	FilterPassed.Store(0)
 	SpeedDone.Store(0)
 	SpeedOk.Store(0)
-}
-
-// checkSubscriptionSuccessRate 检查订阅成功率并发出警告
-func (pc *ProxyChecker) checkSubscriptionSuccessRate(allProxies []map[string]any) {
-	// 统计每个订阅的节点总数和成功数
-	subStats := make(map[string]struct {
-		total   int
-		success int
-	})
-
-	// 统计所有节点的订阅来源
-	for _, proxy := range allProxies {
-		if subUrl, ok := proxy["sub_url"].(string); ok {
-			stats := subStats[subUrl]
-			stats.total++
-			subStats[subUrl] = stats
-		}
-	}
-
-	// 纳入本次实际检测的订阅（含拉取失败/空订阅）
-	for _, url := range proxyutils.ListSubUrls() {
-		if substats.IsDead(url) {
-			continue
-		}
-		if _, ok := subStats[url]; !ok {
-			subStats[url] = struct {
-				total   int
-				success int
-			}{}
-		}
-	}
-
-	// 统计成功节点的订阅来源
-	for _, result := range pc.results {
-		if result.Proxy != nil {
-			if subUrl, ok := result.Proxy["sub_url"].(string); ok {
-				stats := subStats[subUrl]
-				stats.success++
-				subStats[subUrl] = stats
-			}
-			delete(result.Proxy, "sub_url")
-			// 可以保持127.0.0.1:8199/sub/all.yaml中的节点tag
-			if subTag, ok := result.Proxy["sub_tag"].(string); ok {
-				if subTag == "" {
-					delete(result.Proxy, "sub_tag")
-				}
-			}
-		}
-	}
-
-	trackStats := make(map[string]substats.CheckStat, len(subStats))
-	for subUrl, stats := range subStats {
-		trackStats[subUrl] = substats.CheckStat{
-			Total:   stats.total,
-			Success: stats.success,
-		}
-	}
-	substats.Track(trackStats)
-
-	// 检查成功率并发出警告
-	for subUrl, stats := range subStats {
-		if stats.total > 0 {
-			successRate := float32(stats.success) / float32(stats.total)
-
-			// 如果成功率低于x，发出警告
-			if successRate < config.GlobalConfig.SuccessRate {
-				slog.Warn(fmt.Sprintf("订阅成功率过低: %s", subUrl),
-					"总节点数", stats.total,
-					"成功节点数", stats.success,
-					"成功占比", fmt.Sprintf("%.2f%%", successRate*100))
-			} else {
-				slog.Debug(fmt.Sprintf("订阅节点统计: %s", subUrl),
-					"总节点数", stats.total,
-					"成功节点数", stats.success,
-					"成功占比", fmt.Sprintf("%.2f%%", successRate*100))
-			}
-		}
-	}
 }
 
 // statsConn wraps net.Conn to count bytes read and apply rate limiting

@@ -422,7 +422,7 @@
         const PAGE_SIZE = 200;
         const PLATFORM_LABELS = {
             openai: 'OpenAI', netflix: 'Netflix', disney: 'Disney+', youtube: 'YouTube',
-            gemini: 'Gemini', claude: 'Claude', spotify: 'Spotify', tiktok: 'TikTok'
+            gemini: 'Gemini', claude: 'Claude', spotify: 'Spotify', telegram: 'Telegram', tiktok: 'TikTok'
         };
         const TYPE_ORDER = ['vless', 'vmess', 'trojan', 'ss', 'ssr', 'hysteria2', 'hysteria', 'tuic', 'anytls', 'wireguard', 'snell', 'socks5', 'http'];
         const DETAIL_LABELS = {
@@ -605,6 +605,7 @@
             const platforms = [];
             nodes.forEach(function (n, i) {
                 n._i = i;
+                n.country = n.region || n.country;
                 n._unlocked = new Set();
                 n._tags = [];
                 (n.media || []).forEach(function (m) {
@@ -620,7 +621,7 @@
 
             state.data = { checkedAt: data.checkedAt, speedTest: !!data.speedTest, mediaCheck: !!data.mediaCheck, nodes: nodes };
             state.platforms = platforms;
-            state.sortKey = state.data.speedTest ? 'speed' : '';
+            state.sortKey = ''; // preserve server selection and region order until the user sorts
             state.sortDir = 'desc';
 
             buildFilters();
@@ -843,6 +844,7 @@
             fields.push(['传输', n.network + (n.reality ? ' · Reality' : '')]);
             if (n.ip) fields.push(['出口 IP', n.ip]);
             if (n.country) fields.push(['地区', n.country]);
+            if (n.regionSource) fields.push(['地区依据', ({measured: '出口查询', name: '原名称推断', unknown: '未知'})[n.regionSource] || '未知']);
             if (n.ipRisk) fields.push(['IP 风险', n.ipRisk]);
             if (n.subTag) fields.push(['订阅标签', n.subTag]);
             (n.details || []).forEach(function (d) {
@@ -863,7 +865,7 @@
                             ? '<div class="media-item ok"><i class="bi bi-check-circle-fill"></i><span>' + esc(platformLabel(m.platform)) +
                                 '</span><span class="media-tag">' + esc(m.tag) + '</span></div>'
                             : '<div class="media-item no"><i class="bi bi-dash-circle"></i><span>' + esc(platformLabel(m.platform)) +
-                                '</span><span class="media-tag">未解锁</span></div>';
+                                '</span><span class="media-tag">' + (m.status === 'unknown' ? '检测未知' : '未通过') + '</span></div>';
                     }).join('') + '</div></div>';
             }
             html += '</div><div class="detail-note"><i class="bi bi-lock"></i>密码、UUID 等凭据不在此页展示</div></div>';

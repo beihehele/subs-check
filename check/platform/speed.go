@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,7 +25,7 @@ type networkLimitedReader struct {
 }
 
 func (r *networkLimitedReader) Read(p []byte) (n int, err error) {
-	if r.limit > 0 {
+	if r.limit > 0 && r.bytesCounter != nil {
 		currentBytes := atomic.LoadUint64(r.bytesCounter)
 		networkRead := currentBytes - r.startBytes
 
@@ -65,7 +67,7 @@ func CheckSpeed(httpClient *http.Client, bucket *ratelimit.Bucket, bytesCounter 
 	// 记录测速前的网络传输字节数
 	var startBytes uint64
 	if bytesCounter != nil {
-		startBytes = *bytesCounter
+		startBytes = atomic.LoadUint64(bytesCounter)
 	}
 	startTime := time.Now()
 
@@ -75,6 +77,9 @@ func CheckSpeed(httpClient *http.Client, bucket *ratelimit.Bucket, bytesCounter 
 		return 0, 0, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return 0, 0, fmt.Errorf("测速端点返回 HTTP %d", resp.StatusCode)
+	}
 
 	// 计算网络层的大小限制
 	var limitSize uint64
@@ -93,11 +98,23 @@ func CheckSpeed(httpClient *http.Client, bucket *ratelimit.Bucket, bytesCounter 
 	}
 
 	// 读取所有数据
-	totalBytes, err := io.Copy(io.Discard, limitedReader)
-	// io.EOF 是正常的（达到限制），其他错误才需要关注
-	if err != nil && err != io.EOF && totalBytes == 0 {
+	var reader io.Reader = limitedReader
+	if bytesCounter == nil && limitSize > 0 {
+		reader = io.LimitReader(resp.Body, int64(limitSize))
+	}
+	totalBytes, err := io.Copy(io.Discard, reader)
+	// Hitting the configured duration is normal after enough data; resets and
+	// truncated responses are failures even when some bytes were received.
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		slog.Debug(fmt.Sprintf("totalBytes: %d, 读取数据时发生错误: %v", totalBytes, err))
 		return 0, 0, err
+	}
+	minimum := int64(config.GlobalConfig.SpeedMinSampleKB) * 1024
+	if minimum == 0 {
+		minimum = 64 * 1024
+	}
+	if totalBytes < minimum {
+		return 0, 0, fmt.Errorf("测速样本不足: %d < %d 字节", totalBytes, minimum)
 	}
 
 	// 计算下载时间（毫秒）
@@ -109,10 +126,10 @@ func CheckSpeed(httpClient *http.Client, bucket *ratelimit.Bucket, bytesCounter 
 	// 计算实际网络传输的字节数（压缩数据）
 	var actualBytes int64
 	if bytesCounter != nil {
-		actualBytes = int64(*bytesCounter - startBytes)
+		actualBytes = int64(atomic.LoadUint64(bytesCounter) - startBytes)
 	} else {
 		// 如果没有字节计数器，无法获取准确数据
-		actualBytes = 0
+		actualBytes = totalBytes
 	}
 
 	// 计算速度（KB/s），使用实际网络传输的字节数
