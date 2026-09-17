@@ -24,6 +24,8 @@ func TestParseNameservers(t *testing.T) {
 		{"quic://dns.alidns.com", "quic", "dns.alidns.com:853"},
 		{"udp://[::1]", "", "[::1]:53"},
 		{"udp://[::1]:5353", "", "[::1]:5353"},
+		{"::1", "", "[::1]:53"},
+		{"2606:4700:4700::1111", "", "[2606:4700:4700::1111]:53"},
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
@@ -65,19 +67,31 @@ func TestParseNameserversLenient(t *testing.T) {
 
 func TestInitResolverFallbacks(t *testing.T) {
 	saved := config.GlobalConfig.DNS
-	t.Cleanup(func() { config.GlobalConfig.DNS = saved })
+	savedIPv6 := config.GlobalConfig.IPv6
+	t.Cleanup(func() {
+		config.GlobalConfig.DNS = saved
+		config.GlobalConfig.IPv6 = savedIPv6
+	})
 
 	t.Run("disabled is no-op", func(t *testing.T) {
+		config.GlobalConfig.IPv6 = false
 		config.GlobalConfig.DNS = config.DNSConfig{Enable: false}
 		if err := initResolver(); err != nil {
 			t.Errorf("disabled init should not error, got %v", err)
 		}
+		if !resolver.DisableIPv6 {
+			t.Errorf("global ipv6=false should disable IPv6 with system resolver")
+		}
 	})
 
 	t.Run("enabled with all empty falls back to bootstrap defaults", func(t *testing.T) {
+		config.GlobalConfig.IPv6 = true
 		config.GlobalConfig.DNS = config.DNSConfig{Enable: true}
 		if err := initResolver(); err != nil {
 			t.Fatalf("init failed: %v", err)
+		}
+		if resolver.DisableIPv6 {
+			t.Errorf("global ipv6=true should enable IPv6 with custom resolver")
 		}
 		// Mutation is in-place; verify both fields filled from defaults via the chain.
 		c := config.GlobalConfig.DNS

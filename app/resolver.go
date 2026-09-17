@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/url"
 	"strings"
 
 	"github.com/beihehele/subs-check/config"
 	"github.com/metacubex/mihomo/component/resolver"
+	_ "github.com/metacubex/mihomo/config" // init() sets dns.ParseNameServer, used by parseNameservers
 	"github.com/metacubex/mihomo/dns"
 )
 
@@ -29,11 +29,10 @@ var defaultBootstrapNameservers = []string{
 func initResolver() error {
 	c := &config.GlobalConfig.DNS
 
-	// IPv6 toggle applies regardless of Enable — a user can flip on v6 without replacing the resolver.
-	resolver.DisableIPv6 = !c.IPv6
+	// The global IPv6 toggle applies to both the system and custom resolvers.
+	resolver.DisableIPv6 = !config.GlobalConfig.IPv6
 
 	if !c.Enable {
-		slog.Info("DNS resolver 使用 mihomo 默认", "ipv6", c.IPv6)
 		return nil
 	}
 
@@ -69,63 +68,34 @@ func initResolver() error {
 		Main:        main,
 		Default:     def,
 		ProxyServer: proxySrv,
-		IPv6:        c.IPv6,
+		IPv6:        config.GlobalConfig.IPv6,
 	})
 
 	resolver.DefaultResolver = rs.Resolver
 	resolver.ProxyServerHostResolver = rs.ProxyResolver
 
-	slog.Info("DNS resolver 已初始化",
+	slog.Info("DNS resolver 使用自定义 DNS",
 		"nameserver", len(main),
 		"proxy-server", len(proxySrv),
 		"default", len(def),
-		"ipv6", c.IPv6)
+		"ipv6", config.GlobalConfig.IPv6)
 	return nil
 }
 
-// parseNameservers converts string URLs into dns.NameServer. Bare IP becomes UDP:53.
-// Supports: udp://, tcp://, tls://, https://, http://, quic://.
+// parseNameservers converts nameserver strings into dns.NameServer with mihomo's parser,
+// so the syntax matches mihomo's dns section (bare IP becomes UDP:53).
 // Invalid entries are warn-skipped; an error is returned only when all entries are invalid.
 // fieldName is used in log warnings to point users at the offending config field.
 func parseNameservers(servers []string, fieldName string) ([]dns.NameServer, error) {
 	out := make([]dns.NameServer, 0, len(servers))
 	for _, s := range servers {
-		// Bare IP or host[:port] gets the udp:// prefix.
-		raw := s
-		if !strings.Contains(s, "://") {
-			s = "udp://" + s
-		}
-		u, err := url.Parse(s)
+		// Parse one by one so a single bad entry doesn't reject the whole list.
+		ns, err := dns.ParseNameServer([]string{s})
 		if err != nil {
-			slog.Warn(fieldName+" 跳过无效项", "value", raw, "reason", err)
+			slog.Warn(fieldName+" 跳过无效项", "value", s, "reason", err)
 			continue
 		}
-		ns := dns.NameServer{}
-		switch u.Scheme {
-		case "udp":
-			ns.Addr = hostPort(u.Host, "53")
-		case "tcp":
-			ns.Net = "tcp"
-			ns.Addr = hostPort(u.Host, "53")
-		case "tls":
-			ns.Net = "tls"
-			ns.Addr = hostPort(u.Host, "853")
-		case "https", "http":
-			ns.Net = "https"
-			defPort := "443"
-			if u.Scheme == "http" {
-				defPort = "80"
-			}
-			cleaned := url.URL{Scheme: u.Scheme, Host: hostPort(u.Host, defPort), Path: u.Path}
-			ns.Addr = cleaned.String()
-		case "quic":
-			ns.Net = "quic"
-			ns.Addr = hostPort(u.Host, "853")
-		default:
-			slog.Warn(fieldName+" 跳过不支持的 scheme", "value", raw, "scheme", u.Scheme)
-			continue
-		}
-		out = append(out, ns)
+		out = append(out, ns...)
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("%s 全部无效，至少需要一个有效项", fieldName)
@@ -157,15 +127,4 @@ func validateBootstrapIPs(servers []string) ([]string, error) {
 		return nil, fmt.Errorf("default-nameserver 全部无效，至少需要一个有效 IP")
 	}
 	return valid, nil
-}
-
-func hostPort(host, defPort string) string {
-	if host == "" {
-		return ":" + defPort
-	}
-	// IPv6 literal already has its own [::1] wrapping; just check for a trailing :port.
-	if idx := strings.LastIndex(host, ":"); idx > strings.LastIndex(host, "]") {
-		return host
-	}
-	return host + ":" + defPort
 }

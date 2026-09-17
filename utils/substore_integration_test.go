@@ -75,6 +75,8 @@ func startTempSubStore(t *testing.T) string {
 		"SUB_STORE_BACKEND_API_PORT="+port,
 		"SUB_STORE_BACKEND_API_HOST=127.0.0.1",
 		"SUB_STORE_BODY_JSON_LIMIT=30mb",
+		"SUB_STORE_FRONTEND_BACKEND_PATH=/",
+		"SUB_STORE_CORS_ALLOWED_ORIGINS=*",
 	)
 	logFile, _ := os.Create(filepath.Join(dir, "sub-store.log"))
 	cmd.Stdout = logFile

@@ -8,6 +8,7 @@ import (
 
 	"github.com/beihehele/subs-check/check"
 	"github.com/beihehele/subs-check/config"
+	"github.com/beihehele/subs-check/export"
 	"github.com/beihehele/subs-check/save/method"
 	"github.com/beihehele/subs-check/utils"
 	"gopkg.in/yaml.v3"
@@ -19,12 +20,12 @@ type SaveFunc func(data []byte, filename string) error
 // SaveConfig 保存检查结果到本地，并可选保存到远程存储。
 //
 // 执行顺序很关键:
-//   1. 先把 results 序列化保存到 history(此时 proxy["name"] 仍是原始名,
-//      history 文件天然干净,keep-days 下次加载时不会累积标签)
-//   2. 然后 AssignDisplayNames 按地区输出顺序分配最终展示名
-//      (base + 媒体标签 + 速度标签 + sub_tag, _N 序号在此一次性分配)
-//   3. 最后用 mutate 过的 results 序列化成 all.yaml、mihomo.yaml、base64.txt
-//      并写本地 / 远程 / SubStore
+//  1. 先把 results 序列化保存到 history(此时 proxy["name"] 仍是原始名,
+//     history 文件天然干净,keep-days 下次加载时不会累积标签)
+//  2. 然后 AssignDisplayNames 按地区输出顺序分配最终展示名
+//     (base + 媒体标签 + 速度标签 + sub_tag, _N 序号在此一次性分配)
+//  3. 最后用 mutate 过的 results 序列化成 all.yaml、mihomo.yaml、base64.txt
+//     并写本地 / 远程 / SubStore
 //
 // 隐式契约: SaveConfig 调用后 results 视为已消费,调用方不应再读
 // results[i].Proxy["name"](那已经是展示名,不是原始名)。
@@ -33,6 +34,7 @@ func SaveConfig(results []check.Result) {
 	// 此时所有下游序列化都会失败,统一在入口短路并以 Warn 记录,避免多余的 Error 日志
 	if len(results) == 0 {
 		slog.Warn("本轮没有可保存的节点，跳过保存")
+		saveResultsSnapshot(nil)
 		return
 	}
 
@@ -46,8 +48,18 @@ func SaveConfig(results []check.Result) {
 		}
 	}
 
-	// ② 按最终输出顺序分配展示名(含稳定 _N 序号)
-	check.AssignDisplayNames(results)
+	// ② 按地区输出顺序一次性分配名称，并复用结构化名称保存结果快照。
+	nameParts := check.AssignDisplayNames(results)
+	// Also collect structured records for the results page.
+	nodes := make([]NodeRecord, 0, len(results))
+	for _, i := range check.OutputOrderIndices(results) {
+		if results[i].Proxy == nil {
+			continue
+		}
+		parts := nameParts[i]
+		nodes = append(nodes, newNodeRecord(results[i], parts))
+	}
+	saveResultsSnapshot(nodes)
 
 	// ③ 用 mutate 过的 results 序列化,给 all.yaml / 远程 / SubStore 复用
 	allYamlData, err := marshalProxies(results)
@@ -64,7 +76,10 @@ func SaveConfig(results []check.Result) {
 	// 更新 SubStore 并获取衍生文件(mihomo.yaml / base64.txt)
 	var mihomoData, base64Data []byte
 	if config.GlobalConfig.SubStorePort != "" {
-		utils.UpdateSubStore(allYamlData)
+		// Rebuild exports only once sub-store holds this round's nodes.
+		if err := utils.UpdateSubStore(allYamlData); err == nil {
+			export.RoundComplete()
+		}
 		mihomoData = fetchSubStoreData(
 			fmt.Sprintf("%s/api/file/%s", utils.BaseURL, utils.MihomoName),
 			"mihomo.yaml",

@@ -59,10 +59,10 @@ func TestRenderName_RenameOff_WithMediaTags(t *testing.T) {
 			Proxy:   map[string]any{"name": "🇭🇰香港01"},
 			Openai:  &platform.OpenAIResult{Full: true, Region: "HK"},
 			Netflix: &platform.NetflixResult{Full: true, Region: "HK"},
-			Disney:  true,
+			Disney:  &platform.DisneyResult{Unlocked: true, Region: "HK"},
 		}
 		got := RenderName(r, false)
-		want := "🇭🇰香港01|GPT⁺-HK|NF-HK|D+"
+		want := "🇭🇰香港01|GPT⁺-HK|NF-HK|D+-HK"
 		if got != want {
 			t.Errorf("RenderName() = %q, want %q", got, want)
 		}
@@ -189,7 +189,7 @@ func TestRenderName_SubTagAppendedLast(t *testing.T) {
 	}, func() {
 		r := Result{
 			Proxy:  map[string]any{"name": "n", "sub_tag": "my-sub"},
-			Disney: true,
+			Disney: &platform.DisneyResult{Unlocked: true},
 		}
 		got := RenderName(r, false)
 		want := "n|D+|my-sub"
@@ -300,4 +300,45 @@ func TestRenderName_RenameOnButEmptyCountry_UsesOtherFallback(t *testing.T) {
 			t.Errorf("RenderName() preview = %q, want PREFIX-❓Other", got)
 		}
 	})
+}
+
+func TestRenderNameParts_MatchesRenderName(t *testing.T) {
+	withConfig(t, config.Config{
+		RenameNode:   false,
+		SpeedTestUrl: "https://speed.example.com",
+		Platforms:    []string{"openai", "netflix", "disney"},
+	}, func() {
+		r := Result{
+			Proxy:   map[string]any{"name": "🇭🇰香港01", "sub_tag": "机场A"},
+			Speed:   2048,
+			Netflix: &platform.NetflixResult{Full: true, Region: "HK"},
+		}
+		p := RenderNameParts(r, true)
+		if got, want := p.String(), RenderName(r, true); got != want {
+			t.Errorf("NameParts.String() = %q, RenderName() = %q", got, want)
+		}
+		if p.Base != "🇭🇰香港01" || p.SpeedTag != "2.0MB/s" || p.SubTag != "机场A" {
+			t.Errorf("parts = %+v", p)
+		}
+		// Misses are kept so the page can show "not unlocked".
+		want := []MediaTag{{Platform: "openai"}, {Platform: "netflix", Tag: "NF-HK"}, {Platform: "disney"}}
+		if len(p.Media) != len(want) {
+			t.Fatalf("media = %+v, want %+v", p.Media, want)
+		}
+		for i := range want {
+			if p.Media[i] != want[i] {
+				t.Errorf("media[%d] = %+v, want %+v", i, p.Media[i], want[i])
+			}
+		}
+	})
+}
+
+// 辅助函数
+func stringContains(s, substr string) bool {
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
