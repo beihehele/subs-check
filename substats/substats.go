@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/beihehele/subs-check/config"
 	"github.com/beihehele/subs-check/save/method"
+	"github.com/beihehele/subs-check/utils"
 )
 
 const (
@@ -61,6 +63,10 @@ type Snapshot struct {
 
 type statsStore map[string]Stat
 
+// statsMu protects the read/modify/write cycle and keeps the API from reading
+// a store while a check is publishing its new snapshot.
+var statsMu sync.RWMutex
+
 const (
 	statusActive       = "active"
 	statusDead         = "dead"
@@ -70,6 +76,8 @@ const (
 
 // IsDead reports whether url should be skipped this run.
 func IsDead(url string) bool {
+	statsMu.RLock()
+	defer statsMu.RUnlock()
 	entry, ok := loadEntry(url)
 	if !ok {
 		return false
@@ -79,6 +87,8 @@ func IsDead(url string) bool {
 
 // IsRecheckDue reports whether a dead subscription is being spot-checked this run.
 func IsRecheckDue(url string) bool {
+	statsMu.RLock()
+	defer statsMu.RUnlock()
 	entry, ok := loadEntry(url)
 	if !ok {
 		return false
@@ -96,6 +106,8 @@ func Track(checkStats map[string]CheckStat) {
 	if len(checkStats) == 0 {
 		return
 	}
+	statsMu.Lock()
+	defer statsMu.Unlock()
 
 	outputPath, ok := getOutputPath()
 	if !ok {
@@ -177,6 +189,8 @@ func Track(checkStats map[string]CheckStat) {
 
 // LoadSnapshot builds the admin/API view for all known subscription URLs.
 func LoadSnapshot(urls []string) Snapshot {
+	statsMu.RLock()
+	defer statsMu.RUnlock()
 	snap := Snapshot{
 		DeadSubDays:        config.GlobalConfig.DeadSubDays,
 		DeadSubRecheckDays: config.GlobalConfig.DeadSubRecheckDays,
@@ -341,21 +355,14 @@ func loadStats(outputPath string) (statsStore, error) {
 }
 
 func saveStats(outputPath string, store statsStore) error {
-	if err := os.MkdirAll(outputPath, 0755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(outputPath, statsFile), data, 0644)
+	return utils.WriteFileAtomic(filepath.Join(outputPath, statsFile), data)
 }
 
 func writeDeadSubsFile(outputPath string, dead []string, store statsStore, now time.Time, days int) error {
-	if err := os.MkdirAll(outputPath, 0755); err != nil {
-		return err
-	}
-
 	recheckDays := config.GlobalConfig.DeadSubRecheckDays
 	var b strings.Builder
 	fmt.Fprintf(&b, "# 以下订阅连续 %d 天无可用节点，后续检测将自动跳过\n", days)
@@ -373,7 +380,7 @@ func writeDeadSubsFile(outputPath string, dead []string, store statsStore, now t
 		}
 		fmt.Fprintf(&b, "%s | 末次成功: %s | 本次: %d/%d\n", url, lastSuccess, entry.LastSuccess, entry.LastTotal)
 	}
-	return os.WriteFile(filepath.Join(outputPath, deadFile), []byte(b.String()), 0644)
+	return utils.WriteFileAtomic(filepath.Join(outputPath, deadFile), []byte(b.String()))
 }
 
 func getOutputPath() (string, bool) {

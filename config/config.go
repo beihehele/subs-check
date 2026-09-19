@@ -1,6 +1,10 @@
 package config
 
-import _ "embed"
+import (
+	_ "embed"
+	"sync"
+	"time"
+)
 
 type Config struct {
 	PrintProgress        bool             `yaml:"print-progress"`
@@ -112,6 +116,101 @@ type DNSConfig struct {
 
 var GlobalConfig = Defaults()
 
+// configMu serializes runtime configuration replacement with a check run.
+// Callers that only need to inspect configuration while a reload may be in
+// progress should use Snapshot. The run/reload guards are intentionally kept
+// here so packages do not need to coordinate on the mutable GlobalConfig
+// pointer themselves.
+var configMu sync.RWMutex
+
+// Reload acquisition polls instead of blocking on Lock. sync.RWMutex gives
+// queued writers priority over new readers, so a reload that blocks in Lock
+// while a long check run holds the read side would also stall every later
+// RLock until the run finished. TryLock never queues a writer, so readers keep
+// making progress while the reload waits its turn.
+const (
+	reloadPollMin = 5 * time.Millisecond
+	reloadPollMax = 500 * time.Millisecond
+)
+
+// AcquireRun prevents a hot reload from replacing GlobalConfig while a check
+// pipeline is reading it. The returned function must be deferred by the
+// caller.
+func AcquireRun() func() {
+	configMu.RLock()
+	return configMu.RUnlock
+}
+
+// AcquireReload serializes a configuration replacement with active checks.
+// The returned function must be called after the replacement and any dependent
+// runtime state (for example DNS) has been initialized or rolled back.
+//
+// It must not be called by a goroutine that already holds AcquireRun.
+func AcquireReload() func() {
+	delay := reloadPollMin
+	for !configMu.TryLock() {
+		// A run is in flight. Yield and retry; because TryLock does not queue a
+		// writer, readers are never blocked behind this pending reload.
+		time.Sleep(delay)
+		if delay < reloadPollMax {
+			delay *= 2
+		}
+	}
+	return configMu.Unlock
+}
+
+// Replace publishes a validated configuration for future operations.
+func Replace(next *Config) {
+	if next == nil {
+		return
+	}
+	unlock := AcquireReload()
+	defer unlock()
+	ReplaceLocked(next)
+}
+
+// ReplaceLocked replaces the configuration while the caller owns the reload
+// lock. It is used when applying a config and initializing dependent globals
+// must be one transaction.
+func ReplaceLocked(next *Config) {
+	if next != nil {
+		*GlobalConfig = *next
+	}
+}
+
+// Snapshot returns a detached copy suitable for short-lived read-only work.
+// Slices and maps are copied so callers cannot mutate the live configuration
+// through a shared backing array.
+func Snapshot() Config {
+	configMu.RLock()
+	defer configMu.RUnlock()
+	return clone(*GlobalConfig)
+}
+
+func clone(src Config) Config {
+	dst := src
+	dst.SubUrls = append([]string(nil), src.SubUrls...)
+	dst.SubUrlsRemote = append([]string(nil), src.SubUrlsRemote...)
+	dst.RecipientUrl = append([]string(nil), src.RecipientUrl...)
+	dst.Platforms = append([]string(nil), src.Platforms...)
+	dst.NodeType = append([]string(nil), src.NodeType...)
+	dst.Filter = append([]string(nil), src.Filter...)
+	dst.NodeFilter.Regions = append([]string(nil), src.NodeFilter.Regions...)
+	dst.NodeFilter.Protocols = append([]string(nil), src.NodeFilter.Protocols...)
+	dst.NodeFilter.RequirePlatforms = append([]string(nil), src.NodeFilter.RequirePlatforms...)
+	dst.Selection.PreferredRegions = append([]string(nil), src.Selection.PreferredRegions...)
+	if src.Selection.RegionWeights != nil {
+		dst.Selection.RegionWeights = make(map[string]float64, len(src.Selection.RegionWeights))
+		for k, v := range src.Selection.RegionWeights {
+			dst.Selection.RegionWeights[k] = v
+		}
+	}
+	dst.DNS.Nameserver = append([]string(nil), src.DNS.Nameserver...)
+	dst.DNS.ProxyServerNameserver = append([]string(nil), src.DNS.ProxyServerNameserver...)
+	dst.DNS.DefaultNameserver = append([]string(nil), src.DNS.DefaultNameserver...)
+	return dst
+}
+
 // Defaults returns independent defaults for a complete config load.
 func Defaults() *Config {
 	return &Config{
@@ -127,8 +226,8 @@ func Defaults() *Config {
 		SubUrlsGetUA:       "clash.meta (https://github.com/beihehele/subs-check)",
 		SubUrlsReTry:       3,
 		SubUrlsConcurrent:  20,
-		DeadSubDays:        2,
-		DeadSubRecheckDays: 7,
+		DeadSubDays:        0,
+		DeadSubRecheckDays: 0,
 	}
 }
 

@@ -44,7 +44,7 @@
 
 ## 🛠️ 部署与使用 
 > 首次运行会在当前目录生成默认配置文件。  
-> 发布 tag（如 `v1.0.0`）后，镜像会自动推送到 `ghcr.io/<owner>/subs-check`。
+> 发布 tag（如 `v2.0.0`）后，镜像会自动推送到 `ghcr.io/<owner>/subs-check`。
 
 ### 🚀 一键安装（Linux）
 
@@ -55,13 +55,6 @@ mkdir -p /opt/subs-check/{config,output}
 docker pull ghcr.io/OWNER/subs-check:latest
 # 参考下方 Docker 运行命令启动，或使用 docker compose
 ```
-
-<details>
-  <summary>旧版二进制安装脚本（已停用）</summary>
-
-此前通过 GitHub Releases 分发二进制；当前仅发布 GHCR 镜像，请改用 Docker 部署。
-
-</details>
 
 ### 🪜 代理设置（可选）
 <details>
@@ -112,6 +105,7 @@ speed-test-url: https://custom-domain/speedtest?bytes=1073741824
 ### 🐳 Docker 运行
 
 > **⚠️ 注意：**  
+> - 当前发布镜像提供 `linux/amd64` 和 `linux/arm64`。
 > - 限制内存请使用 `--memory="500m"`。  
 > - 可通过环境变量 `API_KEY` 设置 Web 控制面板的 API Key。
 
@@ -270,7 +264,7 @@ http://127.0.0.1:8299/api/file/mihomo
 ```
 
 ## 🌐 内置端口说明
-> subs-check本身会在测试完后保存三个文件到output目录中；output目录中的所有文件会被8199端口提供文件服务
+> subs-check本身会在测试完后保存订阅文件到output目录中；8199端口只提供白名单中的公开订阅文件，统计、历史、缓存和凭据文件不会通过 `/sub/` 暴露
 
 | 服务地址                        | 格式说明                | 来源说明|
 |-------------------------------|-------------------|----|

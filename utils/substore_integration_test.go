@@ -39,8 +39,6 @@ func nodeAssetName() string {
 	switch arch {
 	case "386":
 		arch = "i386"
-	case "arm":
-		arch = "armv7"
 	}
 	return fmt.Sprintf("node_%s_%s.zst", runtime.GOOS, arch)
 }

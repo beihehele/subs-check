@@ -24,6 +24,7 @@ import (
 	"github.com/beihehele/subs-check/save"
 	"github.com/beihehele/subs-check/save/method"
 	"github.com/beihehele/subs-check/substats"
+	"github.com/beihehele/subs-check/utils"
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
@@ -204,6 +205,9 @@ func publicOutputHandler(root string) gin.HandlerFunc {
 	if err != nil {
 		return func(c *gin.Context) { c.Status(http.StatusNotFound) }
 	}
+	if resolvedRoot, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = resolvedRoot
+	}
 	return func(c *gin.Context) {
 		rel := strings.TrimPrefix(c.Param("path"), "/")
 		clean := filepath.Clean(filepath.FromSlash(rel))
@@ -216,6 +220,12 @@ func publicOutputHandler(root string) gin.HandlerFunc {
 		if err != nil {
 			c.Status(http.StatusNotFound)
 			return
+		}
+		// EvalSymlinks is best-effort on platforms where the filesystem does
+		// not expose symlink metadata. Regular files still use the lexical
+		// containment check below; existing symlinks are canonicalized first.
+		if canonical, err := filepath.EvalSymlinks(resolved); err == nil {
+			resolved = canonical
 		}
 		within, err := filepath.Rel(absRoot, resolved)
 		if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(os.PathSeparator)) {
@@ -358,17 +368,22 @@ func (app *App) updateConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := os.WriteFile(app.configPath, []byte(req.Content), 0644); err != nil {
+	// Publish configuration atomically so the fsnotify watcher and concurrent
+	// readers never observe a truncated YAML document. Config may contain
+	// tokens/passwords, so keep it private on Unix hosts.
+	if err := utils.WriteFileAtomicMode(app.configPath, []byte(req.Content), 0o600); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("保存配置文件失败: %v", err)})
 		return
 	}
 
-	// 配置文件监听器会自动重新加载配置
-	c.JSON(http.StatusOK, gin.H{"message": "配置已更新"})
+	// 配置文件监听器会在防抖后重新加载配置；失败时保留上一份有效配置。
+	c.JSON(http.StatusOK, gin.H{"message": "配置已写入，正在热加载"})
 }
 
 // getStatus 获取应用状态
 func (app *App) getStatus(c *gin.Context) {
+	unlockConfig := config.AcquireRun()
+	defer unlockConfig()
 	phaseResults := make(map[string]*check.PhaseResult, 3)
 	for i := 1; i <= 3; i++ {
 		phaseResults[fmt.Sprintf("%d", i)] = check.GetPhaseResult(i)
@@ -412,6 +427,9 @@ func (app *App) forceCloseHandler(c *gin.Context) {
 
 // getSubStats 返回各订阅检测统计
 func (app *App) getSubStats(c *gin.Context) {
+	unlockConfig := config.AcquireRun()
+	defer unlockConfig()
+	c.Header("Cache-Control", "no-store")
 	snap := substats.LoadSnapshot(proxies.ListSubUrls())
 	c.JSON(http.StatusOK, snap)
 }
