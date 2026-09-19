@@ -96,11 +96,20 @@ func (app *App) initConfigWatcher() error {
 					// 创建新的定时器，延迟100ms执行
 					debounceTimer = time.AfterFunc(100*time.Millisecond, func() {
 						slog.Info("配置文件发生变化，正在重新加载")
+						oldConfig := *config.GlobalConfig
 						oldCronExpr := config.GlobalConfig.CronExpression
 						oldInterval := app.interval
 
 						if err := app.loadConfig(); err != nil {
 							slog.Error(fmt.Sprintf("重新加载配置文件失败: %v", err))
+							return
+						}
+						// Resolver globals are initialized once during startup, so a
+						// config reload must rewire them as well. Roll back the parsed
+						// config if the new DNS settings cannot be initialized.
+						if err := initResolver(); err != nil {
+							*config.GlobalConfig = oldConfig
+							slog.Error(fmt.Sprintf("重新加载 DNS 配置失败: %v", err))
 							return
 						}
 

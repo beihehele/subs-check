@@ -29,10 +29,15 @@ var defaultBootstrapNameservers = []string{
 func initResolver() error {
 	c := &config.GlobalConfig.DNS
 
-	// The global IPv6 toggle applies to both the system and custom resolvers.
-	resolver.DisableIPv6 = !config.GlobalConfig.IPv6
-
 	if !c.Enable {
+		// The global IPv6 toggle applies to the system resolver too.
+		resolver.DisableIPv6 = !config.GlobalConfig.IPv6
+		// A hot reload can turn custom DNS off after it was enabled. Clear the
+		// custom resolver globals so subsequent lookups use the system resolver
+		// instead of the stale resolver from the previous config.
+		resolver.DefaultResolver = nil
+		resolver.ProxyServerHostResolver = nil
+		resolver.DirectHostResolver = nil
 		return nil
 	}
 
@@ -71,6 +76,9 @@ func initResolver() error {
 		IPv6:        config.GlobalConfig.IPv6,
 	})
 
+	// Apply the global IPv6 toggle only after all custom DNS inputs have been
+	// validated, so a failed hot reload leaves the previous resolver state intact.
+	resolver.DisableIPv6 = !config.GlobalConfig.IPv6
 	resolver.DefaultResolver = rs.Resolver
 	resolver.ProxyServerHostResolver = rs.ProxyResolver
 

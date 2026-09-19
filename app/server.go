@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -77,7 +78,9 @@ func (app *App) newRouter() (*gin.Engine, error) {
 	// CM佬用的布丁狗
 	router.StaticFile("/bdg.yaml", saver.OutputPath+"/bdg.yaml")
 
-	router.Static("/sub/", saver.OutputPath)
+	publicOutput := publicOutputHandler(saver.OutputPath)
+	router.GET("/sub/*path", publicOutput)
+	router.HEAD("/sub/*path", publicOutput)
 
 	// pprof 默认关闭；设置 ENABLE_PPROF=1 后开放。
 	if os.Getenv("ENABLE_PPROF") == "1" {
@@ -141,12 +144,13 @@ func (app *App) newRouter() (*gin.Engine, error) {
 			c.HTML(http.StatusOK, "admin.html", gin.H{
 				"configPath": app.configPath,
 				"nav":        "admin",
+				"base":       ".",
 			})
 		})
 
 		// Results page
 		router.GET("/admin/results", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "results.html", gin.H{"nav": "results"})
+			c.HTML(http.StatusOK, "results.html", gin.H{"nav": "results", "base": ".."})
 		})
 	} else {
 		slog.Info("Web控制面板已禁用")
@@ -180,6 +184,7 @@ func (app *App) exportHandler(c *gin.Context) {
 
 // getResults returns the latest round snapshot.
 func (app *App) getResults(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	data, err := os.ReadFile(save.ResultsPath())
 	if errors.Is(err, fs.ErrNotExist) {
 		c.JSON(http.StatusOK, gin.H{"nodes": []any{}})
@@ -189,8 +194,56 @@ func (app *App) getResults(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取检测结果失败: %v", err)})
 		return
 	}
-	c.Header("Cache-Control", "no-store")
 	c.Data(http.StatusOK, "application/json; charset=utf-8", data)
+}
+
+// publicOutputHandler serves generated subscription files while keeping private
+// bookkeeping and embedded service files out of the public /sub/ namespace.
+func publicOutputHandler(root string) gin.HandlerFunc {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return func(c *gin.Context) { c.Status(http.StatusNotFound) }
+	}
+	return func(c *gin.Context) {
+		rel := strings.TrimPrefix(c.Param("path"), "/")
+		clean := filepath.Clean(filepath.FromSlash(rel))
+		if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || privateOutputPath(clean) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		path := filepath.Join(absRoot, clean)
+		resolved, err := filepath.Abs(path)
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		within, err := filepath.Rel(absRoot, resolved)
+		if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(os.PathSeparator)) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		info, err := os.Stat(resolved)
+		if err != nil || info.IsDir() {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.File(resolved)
+	}
+}
+
+func privateOutputPath(path string) bool {
+	path = strings.ToLower(filepath.ToSlash(path))
+	if path == "history" || strings.HasPrefix(path, "history/") ||
+		path == "cache" || strings.HasPrefix(path, "cache/") {
+		return true
+	}
+	base := filepath.Base(path)
+	if base == "sub-stats.json" || base == "dead-subs.txt" || base == "sub-store.log" ||
+		strings.HasPrefix(base, "sub-store.log.") || base == "node" || base == "node.exe" ||
+		base == "sub-store.bundle.js" || strings.HasPrefix(base, ".tmp-") {
+		return true
+	}
+	return false
 }
 
 // getExportStatus returns the state of every export target.
