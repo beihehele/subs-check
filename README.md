@@ -44,7 +44,7 @@
 
 ## 🛠️ 部署与使用 
 > 首次运行会在当前目录生成默认配置文件。  
-> 发布 tag（如 `v2.0.0`）后，镜像会自动推送到 `ghcr.io/<owner>/subs-check`。
+> 发布 tag（如 `v3.0.0`）后，镜像会自动推送到 `ghcr.io/<owner>/subs-check`。
 
 ### 🚀 一键安装（Linux）
 
