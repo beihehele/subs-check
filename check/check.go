@@ -179,6 +179,12 @@ func effectiveConcurrency(phaseConcurrency, fallback, itemCount int) int {
 
 // Check 执行代理检测的主函数
 func Check() ([]Result, error) {
+	// Keep one immutable view of GlobalConfig for the complete run. The
+	// reload path waits on this read lock before replacing config or resolver
+	// state, preventing a pipeline from mixing settings from two revisions.
+	unlockConfig := config.AcquireRun()
+	defer unlockConfig()
+
 	if err := config.GlobalConfig.Validate(); err != nil {
 		return nil, err
 	}

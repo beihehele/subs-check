@@ -124,6 +124,10 @@ var mihomoOverwriteUrl string
 // 基础URL配置
 var BaseURL string
 
+// subStoreHTTPClient prevents a stuck local sub-store request from blocking
+// the save phase forever. All calls in this file use the same bounded client.
+var subStoreHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 // UpdateSubStore writes this round's nodes to sub-store. A nil error means the
 // sub now holds them; a failed mihomo overwrite update doesn't count. Errors are
 // already logged.
@@ -132,10 +136,8 @@ func UpdateSubStore(yamlData []byte) error {
 	if os.Getenv("SUB_CHECK_SKIP") != "" && config.GlobalConfig.SubStorePort != "" {
 		time.Sleep(time.Second * 1)
 	}
-	// 处理用户输入的格式
-	config.GlobalConfig.SubStorePort = formatPort(config.GlobalConfig.SubStorePort)
 	// 设置基础URL
-	BaseURL = SubStoreBaseURL()
+	BaseURL = subStoreBaseURL(config.GlobalConfig.SubStorePort, config.GlobalConfig.SubStorePath)
 
 	if err := checkSub(); err != nil {
 		slog.Debug(fmt.Sprintf("检查sub配置文件失败: %v, 正在创建中...", err))
@@ -176,7 +178,7 @@ func UpdateSubStore(yamlData []byte) error {
 	return nil
 }
 func checkSub() error {
-	resp, err := http.Get(fmt.Sprintf("%s/api/sub/%s", BaseURL, SubName))
+	resp, err := subStoreHTTPClient.Get(fmt.Sprintf("%s/api/sub/%s", BaseURL, SubName))
 	if err != nil {
 		return err
 	}
@@ -212,7 +214,7 @@ func createSub(data []byte) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(fmt.Sprintf("%s/api/subs", BaseURL), "application/json", bytes.NewBuffer(json))
+	resp, err := subStoreHTTPClient.Post(fmt.Sprintf("%s/api/subs", BaseURL), "application/json", bytes.NewBuffer(json))
 	if err != nil {
 		return err
 	}
@@ -237,7 +239,7 @@ func updateSub(data []byte) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := subStoreHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -260,7 +262,7 @@ func countProxiesInYAML(data []byte) (int, error) {
 
 func fetchDownloadProxyCount(target string) (int, error) {
 	url := fmt.Sprintf("%s/download/%s?target=%s", BaseURL, SubName, target)
-	resp, err := http.Get(url)
+	resp, err := subStoreHTTPClient.Get(url)
 	if err != nil {
 		return 0, err
 	}
@@ -308,7 +310,7 @@ func logSubStoreProxyCounts(source []byte) {
 }
 
 func getSubProcess() ([]map[string]any, error) {
-	resp, err := http.Get(fmt.Sprintf("%s/api/sub/%s", BaseURL, SubName))
+	resp, err := subStoreHTTPClient.Get(fmt.Sprintf("%s/api/sub/%s", BaseURL, SubName))
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +381,7 @@ func stripEmptyQuickSettingOperator() error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := subStoreHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -392,7 +394,7 @@ func stripEmptyQuickSettingOperator() error {
 }
 
 func checkfile() error {
-	resp, err := http.Get(fmt.Sprintf("%s/api/wholeFile/%s", BaseURL, MihomoName))
+	resp, err := subStoreHTTPClient.Get(fmt.Sprintf("%s/api/wholeFile/%s", BaseURL, MihomoName))
 	if err != nil {
 		return err
 	}
@@ -436,7 +438,7 @@ func createfile() error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(fmt.Sprintf("%s/api/files", BaseURL), "application/json", bytes.NewBuffer(json))
+	resp, err := subStoreHTTPClient.Post(fmt.Sprintf("%s/api/files", BaseURL), "application/json", bytes.NewBuffer(json))
 	if err != nil {
 		return err
 	}
@@ -450,7 +452,7 @@ func createfile() error {
 func updatefile() error {
 	// 把现有 file 整个拉出来，只改我们自己的 Script Operator 的覆写 URL，
 	// 再用 PATCH (浅合并) 只发回 process。这样用户加的其它算子和文件的其它字段都保留。
-	resp, err := http.Get(fmt.Sprintf("%s/api/wholeFile/%s", BaseURL, MihomoName))
+	resp, err := subStoreHTTPClient.Get(fmt.Sprintf("%s/api/wholeFile/%s", BaseURL, MihomoName))
 	if err != nil {
 		return err
 	}
@@ -533,7 +535,7 @@ func updatefile() error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = http.DefaultClient.Do(req)
+	resp, err = subStoreHTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -557,11 +559,12 @@ func formatPort(port string) string {
 // SubStoreBaseURL returns the local sub-store address. Unlike BaseURL, it does
 // not depend on UpdateSubStore having run.
 func SubStoreBaseURL() string {
-	u := "http://127.0.0.1" + formatPort(config.GlobalConfig.SubStorePort)
-	if config.GlobalConfig.SubStorePath != "" {
-		u += config.GlobalConfig.SubStorePath
-	}
-	return u
+	return subStoreBaseURL(config.GlobalConfig.SubStorePort, config.GlobalConfig.SubStorePath)
+}
+
+func subStoreBaseURL(port, path string) string {
+	u := "http://127.0.0.1" + formatPort(port)
+	return u + path
 }
 
 func WarpUrl(url string) string {

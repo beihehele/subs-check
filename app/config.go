@@ -28,24 +28,36 @@ func (app *App) initConfigPath() error {
 	return nil
 }
 
-// loadConfig 加载配置文件
-func (app *App) loadConfig() error {
+// readConfig parses and validates a configuration without publishing it.
+// Keeping parsing separate lets the watcher replace the config and rewire DNS
+// under one reload lock, so a running check never observes a half-applied
+// configuration.
+func (app *App) readConfig() (*config.Config, error) {
 	yamlFile, err := os.ReadFile(app.configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return app.createDefaultConfig()
+			return nil, app.createDefaultConfig()
 		}
-		return fmt.Errorf("读取配置文件失败: %w", err)
+		return nil, fmt.Errorf("读取配置文件失败: %w", err)
 	}
 
 	next := config.Defaults()
 	if err := yaml.Unmarshal(yamlFile, next); err != nil {
-		return fmt.Errorf("解析配置文件失败: %w", err)
+		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 	if err := next.Validate(); err != nil {
-		return fmt.Errorf("配置验证失败: %w", err)
+		return nil, fmt.Errorf("配置验证失败: %w", err)
 	}
-	*config.GlobalConfig = *next
+	return next, nil
+}
+
+// loadConfig loads and publishes a validated configuration.
+func (app *App) loadConfig() error {
+	next, err := app.readConfig()
+	if err != nil {
+		return err
+	}
+	config.Replace(next)
 
 	slog.Info("配置文件读取成功")
 	return nil
@@ -55,7 +67,7 @@ func (app *App) loadConfig() error {
 func (app *App) createDefaultConfig() error {
 	slog.Info("配置文件不存在，创建默认配置文件")
 
-	if err := os.WriteFile(app.configPath, []byte(config.DefaultConfigTemplate), 0644); err != nil {
+	if err := utils.WriteFileAtomicMode(app.configPath, config.DefaultConfigTemplate, 0o600); err != nil {
 		return fmt.Errorf("写入默认配置文件失败: %w", err)
 	}
 
@@ -87,7 +99,8 @@ func (app *App) initConfigWatcher() error {
 					continue
 				}
 				// 兼容容器外修改
-				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+				// Atomic API writes may surface as Rename/Create instead of Write.
+				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) != 0 {
 					// 如果定时器存在，重置它
 					if debounceTimer != nil {
 						debounceTimer.Stop()
@@ -96,19 +109,27 @@ func (app *App) initConfigWatcher() error {
 					// 创建新的定时器，延迟100ms执行
 					debounceTimer = time.AfterFunc(100*time.Millisecond, func() {
 						slog.Info("配置文件发生变化，正在重新加载")
+						next, err := app.readConfig()
+						if err != nil {
+							slog.Error(fmt.Sprintf("重新加载配置文件失败: %v", err))
+							return
+						}
+
+						// Hold the reload lock through config replacement and resolver
+						// initialization. Check acquires the read side for its whole
+						// pipeline, so a reload waits for the active run to finish.
+						unlock := config.AcquireReload()
 						oldConfig := *config.GlobalConfig
 						oldCronExpr := config.GlobalConfig.CronExpression
 						oldInterval := app.interval
 
-						if err := app.loadConfig(); err != nil {
-							slog.Error(fmt.Sprintf("重新加载配置文件失败: %v", err))
-							return
-						}
+						config.ReplaceLocked(next)
 						// Resolver globals are initialized once during startup, so a
 						// config reload must rewire them as well. Roll back the parsed
 						// config if the new DNS settings cannot be initialized.
 						if err := initResolver(); err != nil {
-							*config.GlobalConfig = oldConfig
+							config.ReplaceLocked(&oldConfig)
+							unlock()
 							slog.Error(fmt.Sprintf("重新加载 DNS 配置失败: %v", err))
 							return
 						}
@@ -128,6 +149,7 @@ func (app *App) initConfigWatcher() error {
 							// 使用setTimer方法重新设置定时器
 							app.setTimer()
 						}
+						unlock()
 					})
 				}
 			case err, ok := <-watcher.Errors:

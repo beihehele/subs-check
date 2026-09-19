@@ -14,7 +14,7 @@ FLAGS := -trimpath
 LDFLAGS := -s -w -X main.Version=$(VERSION) -X main.CurrentCommit=$(COMMIT)
 
 # 声明伪目标
-.PHONY: all build run gotool clean help linux-amd64 linux-arm64 linux-arm linux-386 windows-amd64 windows-arm64 windows-386 darwin-amd64 darwin-arm64 build-all
+.PHONY: all build run gotool clean help linux-amd64 linux-arm64 linux-386 windows-amd64 windows-arm64 windows-386 darwin-amd64 darwin-arm64 build-all
 
 # 默认目标：整理代码并编译当前环境
 all:  build
@@ -28,15 +28,12 @@ clean:
 	@if [ -f $(BINARY) ]; then rm -f $(BINARY); fi
 	@rm -rf build/
 
-# Linux 平台 (4 个)
+# Linux 平台 (3 个)
 linux-amd64:
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=linux GOARCH=amd64 $(GO_BIN) build -o $(BINARY)_linux_amd64 $(FLAGS) -ldflags "$(LDFLAGS)"
 
 linux-arm64:
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=linux GOARCH=arm64 $(GO_BIN) build -o $(BINARY)_linux_arm64 $(FLAGS) -ldflags "$(LDFLAGS)"
-
-linux-arm:
-	CGO_ENABLED=$(CGO_ENABLED) GOOS=linux GOARCH=arm GOARM=7 $(GO_BIN) build -o $(BINARY)_linux_armv7 $(FLAGS) -ldflags "$(LDFLAGS)"
 
 linux-386:
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=linux GOARCH=386 $(GO_BIN) build -o $(BINARY)_linux_386 $(FLAGS) -ldflags "$(LDFLAGS)"
@@ -63,7 +60,6 @@ build-all:
 	@mkdir -p build
 	@CGO_ENABLED=$(CGO_ENABLED) GOOS=linux GOARCH=amd64 $(GO_BIN) build -o build/$(BINARY)_linux_amd64 $(FLAGS) -ldflags "$(LDFLAGS)"; \
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=linux GOARCH=arm64 $(GO_BIN) build -o build/$(BINARY)_linux_arm64 $(FLAGS) -ldflags "$(LDFLAGS)"; \
-	CGO_ENABLED=$(CGO_ENABLED) GOOS=linux GOARCH=arm GOARM=7 $(GO_BIN) build -o build/$(BINARY)_linux_armv7 $(FLAGS) -ldflags "$(LDFLAGS)"; \
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=linux GOARCH=386 $(GO_BIN) build -o build/$(BINARY)_linux_386 $(FLAGS) -ldflags "$(LDFLAGS)"; \
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=windows GOARCH=amd64 $(GO_BIN) build -o build/$(BINARY)_windows_amd64.exe $(FLAGS) -ldflags "$(LDFLAGS)"; \
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=windows GOARCH=arm64 $(GO_BIN) build -o build/$(BINARY)_windows_arm64.exe $(FLAGS) -ldflags "$(LDFLAGS)"; \
@@ -80,7 +76,6 @@ help:
 	@echo "make clean        - 移除二进制文件和构建目录"
 	@echo "make linux-amd64  - 编译 Linux/amd64 二进制文件"
 	@echo "make linux-arm64  - 编译 Linux/arm64 二进制文件"
-	@echo "make linux-arm    - 编译 Linux/armv7 二进制文件"
 	@echo "make linux-386    - 编译 Linux/386 二进制文件"
 	@echo "make windows-amd64 - 编译 Windows/amd64 二进制文件"
 	@echo "make windows-arm64 - 编译 Windows/arm64 二进制文件"

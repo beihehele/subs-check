@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/beihehele/subs-check/check"
 	"github.com/beihehele/subs-check/config"
@@ -17,6 +18,8 @@ import (
 
 // SaveFunc 定义保存方法的函数签名
 type SaveFunc func(data []byte, filename string) error
+
+var subStoreHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // SaveConfig 保存检查结果到本地，并可选保存到远程存储。
 //
@@ -31,6 +34,12 @@ type SaveFunc func(data []byte, filename string) error
 // 隐式契约: SaveConfig 调用后 results 视为已消费,调用方不应再读
 // results[i].Proxy["name"](那已经是展示名,不是原始名)。
 func SaveConfig(results []check.Result) {
+	// Keep the output phase on the same validated configuration as the check
+	// that produced these results. A watcher may apply the next config only
+	// after serialization and Sub-Store updates finish.
+	unlockConfig := config.AcquireRun()
+	defer unlockConfig()
+
 	// 0 节点是常见的合理结果(如全部超时或全部被 filter 过滤),
 	// 此时所有下游序列化都会失败,统一在入口短路并以 Warn 记录,避免多余的 Error 日志
 	if len(results) == 0 {
@@ -126,7 +135,7 @@ func marshalProxies(results []check.Result) ([]byte, error) {
 
 // fetchSubStoreData 从 SubStore API 获取数据
 func fetchSubStoreData(url, name string) []byte {
-	resp, err := http.Get(url)
+	resp, err := subStoreHTTPClient.Get(url)
 	if err != nil {
 		slog.Error(fmt.Sprintf("获取%s请求失败: %v", name, err))
 		return nil
