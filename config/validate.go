@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"math"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -23,6 +24,25 @@ func (c *Config) Validate() error {
 	}
 	if c.NameMode == "stable" && !c.RenameNode {
 		return fmt.Errorf("name-mode: stable 需要 rename-node: true")
+	}
+	if p := strings.TrimSpace(c.WebBasePath); p != "" && p != "/" {
+		if !strings.HasPrefix(p, "/") || strings.HasSuffix(p, "/") {
+			return fmt.Errorf("web-base-path 必须以 / 开头且不能以 / 结尾，例如 /subs-check")
+		}
+		if strings.ContainsAny(p, "?# \t\r\n") {
+			return fmt.Errorf("web-base-path 不能包含空格、? 或 #")
+		}
+		if strings.Contains(p, "\\") {
+			return fmt.Errorf("web-base-path 不能包含反斜杠")
+		}
+		if path.Clean(p) != p {
+			return fmt.Errorf("web-base-path 必须是规范化路径，例如 /subs-check")
+		}
+		for _, reserved := range []string{"/api", "/static", "/admin", "/sub", "/export"} {
+			if p == reserved || strings.HasPrefix(p, reserved+"/") {
+				return fmt.Errorf("web-base-path 不能使用保留路径 %s", reserved)
+			}
+		}
 	}
 	if !slices.Contains([]string{"", "balanced", "quality", "hybrid"}, c.Selection.Mode) {
 		return fmt.Errorf("selection.mode 必须为 balanced、quality 或 hybrid")

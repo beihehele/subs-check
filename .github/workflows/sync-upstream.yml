@@ -1,5 +1,7 @@
 name: Sync from Upstream
 
+# 仅用于手动把上游 beck-8/subs-check 的 master 同步到本仓库 master，
+# 不涉及 dev 的 v3 发布线，也不会自动运行。
 on:
   # schedule:
   #   - cron: "0 9 * * *" # every day

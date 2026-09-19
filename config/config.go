@@ -69,6 +69,7 @@ type Config struct {
 	NodePrefix           string           `yaml:"node-prefix"`
 	NodeType             []string         `yaml:"node-type"`
 	EnableWebUI          bool             `yaml:"enable-web-ui"`
+	WebBasePath          string           `yaml:"web-base-path"`
 	APIKey               string           `yaml:"api-key"`
 	GithubProxy          string           `yaml:"github-proxy"`
 	Proxy                string           `yaml:"proxy"`
@@ -212,9 +213,11 @@ func clone(src Config) Config {
 }
 
 // Defaults returns independent defaults for a complete config load.
+// Defaults returns neutral fallbacks for existing configs: fields they never
+// set keep the old behavior. New users should copy config.example.yaml, which
+// enables the recommended feature values.
 func Defaults() *Config {
 	return &Config{
-		// 新增配置，给未更改配置文件的用户一个默认值
 		IPv6:               true,
 		ListenPort:         ":8199",
 		NotifyTitle:        "🔔 节点状态更新",

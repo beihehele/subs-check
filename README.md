@@ -1,8 +1,8 @@
 <h1 align="center">🚀 订阅检测转换工具</h1>
 
 <p align="center">
-	<a href="https://github.com/beihehele/subs-check/releases"><img src="https://img.shields.io/github/v/release/beihehele/subs-check?style=flat-square&include_prereleases&label=version" /></a>
-	<a href="https://github.com/beihehele/subs-check/releases"><img src="https://img.shields.io/github/downloads/beihehele/subs-check/total.svg?style=flat-square" /></a>
+	<a href="https://github.com/beihehele/subs-check/pkgs/container/subs-check"><img src="https://img.shields.io/badge/GHCR-subs--check-blue?style=flat-square&logo=github" /></a>
+	<a href="https://github.com/beihehele/subs-check/pkgs/container/subs-check"><img src="https://img.shields.io/badge/platform-amd64%20%7C%20arm64-blue?style=flat-square" /></a>
 	<a href="https://github.com/beihehele/subs-check/issues"><img src="https://img.shields.io/github/issues-raw/beihehele/subs-check.svg?style=flat-square&label=issues" /></a>
 	<a href="https://github.com/beihehele/subs-check/graphs/contributors"><img src="https://img.shields.io/github/contributors/beihehele/subs-check?style=flat-square" /></a>
 	<a href="https://github.com/beihehele/subs-check/blob/master/LICENSE"><img src="https://img.shields.io/github/license/beihehele/subs-check?style=flat-square" /></a>
@@ -14,8 +14,9 @@
 
 节点标签、筛选与排序配置详见 [节点策略说明](doc/node-strategy.md)。
 
-> **⚠️ 注意：** 功能更新频繁，请查看最新的[配置文件](https://github.com/beihehele/subs-check/blob/master/config/config.example.yaml)以获取最新功能。  
-> **⚠️ 注意：** 如果想要查看功能更新，可以参照 [示例配置提交历史](https://github.com/beihehele/subs-check/commits/master/config/config.example.yaml),这里有变动说明有更功能/逻辑更新
+> **⚠️ 注意：** 功能更新频繁，请查看最新的[配置文件](config/config.example.yaml)以获取最新功能。
+>
+> **⚠️ 注意：** 如果想要查看功能更新，可以参照 [示例配置提交历史](https://github.com/beihehele/subs-check/commits/dev/config/config.example.yaml),这里有变动说明有更功能/逻辑更新
 
 ## 📸 预览
 
@@ -161,6 +162,42 @@ services:
 ```bash
 go run . -f ./config/config.yaml
 ```
+
+### 🌐 反向代理（子路径）
+
+Web 控制面板默认使用相对路径，适用于会剥离子路径的反向代理：
+
+```nginx
+location /subs-check/ {
+    proxy_pass http://127.0.0.1:8199/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+访问 `https://example.com/subs-check/admin`。注意代理要覆盖整个应用，不要只转发 `/admin`；`/static`、`/api` 也需要被代理，否则会出现 JS/CSS 404。
+
+如果代理保留前缀，或你希望用固定的绝对路径，在配置中设置：
+
+```yaml
+web-base-path: /subs-check
+```
+
+应用会同时在根路径和该前缀下注册路由，代理是否剥离前缀都可以工作。对应 nginx 写法：
+
+```nginx
+location /subs-check/ {
+    proxy_pass http://127.0.0.1:8199;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+`/admin` 和 `/admin/results` 同时支持带不带尾斜杠访问；代理应确保 `/static`、`/api` 与页面走同一个前缀。
 
 ## 🔔 通知渠道配置（可选）
 <details>

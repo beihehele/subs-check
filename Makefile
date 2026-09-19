@@ -1,6 +1,8 @@
 # 使用 bash 作为默认 shell
 SHELL=/usr/bin/env bash
 
+# 仅用于源码本地构建，不属于官方发布范围；官方只发布 GHCR 的 linux/amd64 与 linux/arm64 镜像。
+
 # 定义变量
 BINARY := subs-check
 COMMIT := $(shell git rev-parse --short HEAD)

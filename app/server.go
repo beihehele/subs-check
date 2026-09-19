@@ -69,29 +69,12 @@ func (app *App) newRouter() (*gin.Engine, error) {
 		return nil, fmt.Errorf("获取http监听目录失败: %w", err)
 	}
 
-	// 静态文件路由 - 订阅服务相关，始终启用
-	// 最初不应该不带路径，现在保持兼容
-	router.StaticFile("/all.yaml", saver.OutputPath+"/all.yaml")
-	router.StaticFile("/all.txt", saver.OutputPath+"/all.txt")
-	router.StaticFile("/base64.txt", saver.OutputPath+"/base64.txt")
-	router.StaticFile("/mihomo.yaml", saver.OutputPath+"/mihomo.yaml")
-	router.StaticFile("/ACL4SSR_Online_Full.yaml", saver.OutputPath+"/ACL4SSR_Online_Full.yaml")
-	// CM佬用的布丁狗
-	router.StaticFile("/bdg.yaml", saver.OutputPath+"/bdg.yaml")
-
-	publicOutput := publicOutputHandler(saver.OutputPath)
-	router.GET("/sub/*path", publicOutput)
-	router.HEAD("/sub/*path", publicOutput)
-
 	// pprof 默认关闭；设置 ENABLE_PPROF=1 后开放。
 	if os.Getenv("ENABLE_PPROF") == "1" {
 		pprof.Register(router)
 	}
-	// Public export: serves only files generated from the admin page, never converts.
-	// Not under /sub/, which would conflict with the static route above.
-	router.GET("/export/:target", app.exportHandler)
 
-	// 根据配置决定是否启用Web控制面板
+	var staticFS fs.FS
 	if config.GlobalConfig.EnableWebUI {
 		if config.GlobalConfig.APIKey == "" {
 			if apiKey := os.Getenv("API_KEY"); apiKey != "" {
@@ -108,14 +91,48 @@ func (app *App) newRouter() (*gin.Engine, error) {
 		router.SetHTMLTemplate(template.Must(template.New("").ParseFS(configFS, "templates/*.html")))
 
 		// 内置静态资源（bootstrap / bootstrap-icons / monaco-editor），避免依赖外部 CDN
-		staticFS, err := fs.Sub(configFS, "static")
+		sub, err := fs.Sub(configFS, "static")
 		if err != nil {
 			return nil, fmt.Errorf("加载内置静态资源失败: %w", err)
 		}
-		router.StaticFS("/static", http.FS(staticFS))
+		staticFS = sub
+	} else {
+		slog.Info("Web控制面板已禁用")
+	}
+
+	publicOutput := publicOutputHandler(saver.OutputPath)
+
+	// registerRoutes mounts the same surface under one prefix: public
+	// subscription files, export, static assets, API and admin pages. The root
+	// mount stays for backward compatibility; a configured web-base-path adds a
+	// second mount under the reverse proxy's external prefix so absolute URLs
+	// work whether or not the proxy strips that prefix.
+	registerRoutes := func(r gin.IRouter, adminBase, resultsBase string) {
+		// 静态文件路由 - 订阅服务相关，始终启用
+		// 最初不应该不带路径，现在保持兼容
+		r.StaticFile("/all.yaml", saver.OutputPath+"/all.yaml")
+		r.StaticFile("/all.txt", saver.OutputPath+"/all.txt")
+		r.StaticFile("/base64.txt", saver.OutputPath+"/base64.txt")
+		r.StaticFile("/mihomo.yaml", saver.OutputPath+"/mihomo.yaml")
+		r.StaticFile("/ACL4SSR_Online_Full.yaml", saver.OutputPath+"/ACL4SSR_Online_Full.yaml")
+		// CM佬用的布丁狗
+		r.StaticFile("/bdg.yaml", saver.OutputPath+"/bdg.yaml")
+
+		r.GET("/sub/*path", publicOutput)
+		r.HEAD("/sub/*path", publicOutput)
+
+		// Public export: serves only files generated from the admin page, never converts.
+		// Not under /sub/, which would conflict with the static route above.
+		r.GET("/export/:target", app.exportHandler)
+
+		if staticFS == nil {
+			return
+		}
+
+		r.StaticFS("/static", http.FS(staticFS))
 
 		// API路由
-		api := router.Group("/api")
+		api := r.Group("/api")
 		api.Use(app.authMiddleware(config.GlobalConfig.APIKey)) // 添加认证中间件
 		{
 			// 配置相关API
@@ -141,23 +158,47 @@ func (app *App) newRouter() (*gin.Engine, error) {
 		}
 
 		// 配置页面
-		router.GET("/admin", func(c *gin.Context) {
+		adminPage := func(c *gin.Context) {
 			c.HTML(http.StatusOK, "admin.html", gin.H{
 				"configPath": app.configPath,
 				"nav":        "admin",
-				"base":       ".",
+				"base":       adminBase,
 			})
-		})
+		}
+		r.GET("/admin", adminPage)
+		r.GET("/admin/", adminPage)
 
 		// Results page
-		router.GET("/admin/results", func(c *gin.Context) {
-			c.HTML(http.StatusOK, "results.html", gin.H{"nav": "results", "base": ".."})
-		})
-	} else {
-		slog.Info("Web控制面板已禁用")
+		resultsPage := func(c *gin.Context) {
+			c.HTML(http.StatusOK, "results.html", gin.H{"nav": "results", "base": resultsBase})
+		}
+		r.GET("/admin/results", resultsPage)
+		r.GET("/admin/results/", resultsPage)
+	}
+
+	basePath := normalizeWebBasePath(config.GlobalConfig.WebBasePath)
+	adminBase, resultsBase := ".", ".."
+	if basePath != "" {
+		adminBase, resultsBase = basePath, basePath
+	}
+	registerRoutes(router, adminBase, resultsBase)
+	if basePath != "" {
+		registerRoutes(router.Group(basePath), basePath, basePath)
 	}
 
 	return router, nil
+}
+
+// normalizeWebBasePath returns "" or an absolute path without a trailing slash.
+func normalizeWebBasePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return strings.TrimRight(path, "/")
 }
 
 // exportHandler serves a generated export. It is public and never triggers a conversion.

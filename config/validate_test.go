@@ -2,27 +2,12 @@ package config
 
 import (
 	"gopkg.in/yaml.v3"
-	"os"
 	"testing"
 )
 
 func TestExampleConfigValid(t *testing.T) {
 	c := Defaults()
 	if err := yaml.Unmarshal(DefaultConfigTemplate, c); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestRecommendedExampleValid(t *testing.T) {
-	data, err := os.ReadFile("config.example.recommended.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := Defaults()
-	if err := yaml.Unmarshal(data, c); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Validate(); err != nil {
@@ -38,6 +23,12 @@ func TestValidationRejectsInvalidRules(t *testing.T) {
 		"selection: {region-weights: {UK: 1, GB: 2}}",
 		"selection: {mode: typo}",
 		"name-mode: stable\nrename-node: false",
+		"web-base-path: subs-check",
+		"web-base-path: /subs-check/",
+		"web-base-path: /api",
+		"web-base-path: /subs-check//x",
+		"web-base-path: /subs-check/../x",
+		"web-base-path: /subs-check\\x",
 	} {
 		c := Defaults()
 		if err := yaml.Unmarshal([]byte(input), c); err != nil {
@@ -49,6 +40,11 @@ func TestValidationRejectsInvalidRules(t *testing.T) {
 	}
 	c := Defaults()
 	c.Selection.PreferredRegions = []string{"uk", "sg"}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c = Defaults()
+	c.WebBasePath = "/subs-check"
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
