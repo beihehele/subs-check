@@ -261,6 +261,7 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 
 	// Compile filter patterns once; media workers re-use the slice.
 	patterns := CompileFilterPatterns()
+	inputPatterns := compileInputFilterPatterns()
 	if len(patterns) > 0 {
 		slog.Info(fmt.Sprintf("应用节点过滤规则，共 %d 个正则表达式", len(patterns)))
 	}
@@ -283,11 +284,11 @@ func (pc *ProxyChecker) run(proxies []map[string]any) ([]Result, error) {
 	go pipelineDispatch(ctx, proxies, aliveIn)
 
 	// Alive workers
-	aliveWg := pc.startAliveWorkers(ctx, aliveConcurrency, aliveIn, mediaIn)
+	aliveWg := pc.startAliveWorkers(ctx, aliveConcurrency, aliveIn, mediaIn, inputPatterns)
 	go func() { aliveWg.Wait(); close(mediaIn) }()
 
 	// Media workers (filter runs inline on each passing item)
-	mediaWg := pc.startMediaWorkers(ctx, mediaConcurrency, mediaIn, speedIn, collectIn, hasSpeedTest, patterns)
+	mediaWg := pc.startMediaWorkers(ctx, mediaConcurrency, mediaIn, speedIn, collectIn, hasSpeedTest, patterns, inputPatterns)
 	go func() {
 		mediaWg.Wait()
 		close(speedIn)
@@ -432,7 +433,7 @@ func pipelineDispatch(ctx context.Context, proxies []map[string]any, out chan<- 
 // work in the downstream media / speed stages.
 // Items already classified as "passed speed" never get dropped — see
 // startSpeedWorkers for the asymmetric policy at the last boundary.
-func (pc *ProxyChecker) startAliveWorkers(ctx context.Context, n int, in <-chan aliveTask, out chan<- mediaEntry) *sync.WaitGroup {
+func (pc *ProxyChecker) startAliveWorkers(ctx context.Context, n int, in <-chan aliveTask, out chan<- mediaEntry, inputPatterns inputFilterPatterns) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
@@ -442,7 +443,7 @@ func (pc *ProxyChecker) startAliveWorkers(ctx context.Context, n int, in <-chan 
 				if ctx.Err() != nil {
 					return
 				}
-				if !matchesInputFilter(t.proxy) {
+				if !matchesInputFilter(t.proxy, inputPatterns) {
 					pc.incrementProgress()
 					continue
 				}
@@ -480,6 +481,7 @@ func (pc *ProxyChecker) startMediaWorkers(
 	speedOut, collectOut chan<- pipelineItem,
 	hasSpeed bool,
 	patterns []*regexp.Regexp,
+	inputPatterns inputFilterPatterns,
 ) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
@@ -496,7 +498,7 @@ func (pc *ProxyChecker) startMediaWorkers(
 				}
 				res := pc.checkMedia(entry.a)
 				MediaDone.Add(1)
-				if res == nil || !MatchesFilter(*res, patterns) {
+				if res == nil || !matchesFilter(*res, patterns, inputPatterns) {
 					continue
 				}
 				FilterPassed.Add(1)

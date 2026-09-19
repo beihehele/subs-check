@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>检测结果 - Subs Check</title>
-    <link href="/static/bootstrap/bootstrap.min.css" rel="stylesheet">
-    <link href="/static/bootstrap-icons/bootstrap-icons.css" rel="stylesheet">
-    <link href="/static/css/app.css" rel="stylesheet">
+    <link href="{{.base}}/static/bootstrap/bootstrap.min.css" rel="stylesheet">
+    <link href="{{.base}}/static/bootstrap-icons/bootstrap-icons.css" rel="stylesheet">
+    <link href="{{.base}}/static/css/app.css" rel="stylesheet">
     <style>
         /* Header */
         .page-head {
@@ -414,7 +414,7 @@
         </div>
     </div>
 
-    <script src="/static/bootstrap/bootstrap.bundle.min.js"></script>
+    <script src="{{.base}}/static/bootstrap/bootstrap.bundle.min.js"></script>
     <script>
     (function () {
         'use strict';
@@ -511,7 +511,7 @@
         function api(path, options) {
             options = options || {};
             const headers = Object.assign({}, options.headers || {}, { 'X-API-Key': getApiKey() });
-            return fetch(path, Object.assign({}, options, { headers: headers })).then(function (resp) {
+            return fetch('{{.base}}' + path, Object.assign({}, options, { headers: headers })).then(function (resp) {
                 return resp.json().catch(function () { return {}; }).then(function (body) {
                     if (resp.status === 401) {
                         const err = new Error('API密钥无效或未提供');
@@ -575,13 +575,13 @@
         function load() {
             if (!getApiKey()) {
                 dom.summary.textContent = '需要 API 密钥';
-                showNotice('bi-key', '需要 API 密钥', '请先在<a href="/admin">控制台</a>输入并保存 API 密钥。');
+                showNotice('bi-key', '需要 API 密钥', '请先在<a href="{{.base}}/admin">控制台</a>输入并保存 API 密钥。');
                 return;
             }
             api('/api/results').then(setData).catch(function (err) {
                 dom.summary.textContent = '加载失败';
                 if (err.unauthorized) {
-                    showNotice('bi-key', 'API 密钥无效', '请回到<a href="/admin">控制台</a>重新输入 API 密钥。');
+                    showNotice('bi-key', 'API 密钥无效', '请回到<a href="{{.base}}/admin">控制台</a>重新输入 API 密钥。');
                 } else {
                     showNotice('bi-exclamation-triangle', '加载检测结果失败', esc(err.message));
                 }
@@ -1061,7 +1061,7 @@
         }
 
         function renderTargetDetail(t) {
-            const url = window.location.origin + t.path;
+            const url = new URL('{{.base}}' + t.path, window.location.href).href;
             const busy = t.state === 'generating' || exp.busy[t.id] === 'generate';
             const pending = !!exp.busy[t.id];
             const hasFile = t.state === 'preset' || !!t.generatedAt;
@@ -1195,7 +1195,7 @@
             const t = findTarget(exp.selected);
             if (!btn || !t) return;
             const action = btn.getAttribute('data-action');
-            const url = window.location.origin + t.path;
+            const url = new URL('{{.base}}' + t.path, window.location.href).href;
             if (action === 'generate') {
                 mutate(t, 'POST');
             } else if (action === 'disable') {
@@ -1206,7 +1206,7 @@
                     renderExport();
                 });
             } else if (action === 'copy-content') {
-                fetch(t.path, { cache: 'no-store' }).then(function (resp) {
+                fetch('{{.base}}' + t.path, { cache: 'no-store' }).then(function (resp) {
                     return resp.text().then(function (text) {
                         if (!resp.ok) throw new Error(text || ('HTTP ' + resp.status));
                         return text;

@@ -171,6 +171,9 @@ func TestInitResolverFallbacks(t *testing.T) {
 		if err := initResolver(); err != nil {
 			t.Errorf("disabled init must ignore bad bootstrap IPs, got %v", err)
 		}
+		if resolver.DefaultResolver != nil || resolver.ProxyServerHostResolver != nil || resolver.DirectHostResolver != nil {
+			t.Errorf("disabled init must clear custom resolver globals")
+		}
 	})
 }
 

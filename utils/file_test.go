@@ -57,3 +57,20 @@ func TestWriteFileAtomic_CreatesDirAndReplaces(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteFileAtomicMode_UsesRequestedMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix permission bits")
+	}
+	path := filepath.Join(t.TempDir(), "data.txt")
+	if err := WriteFileAtomicMode(path, []byte("data"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o640 {
+		t.Fatalf("perm = %o, want 640", got)
+	}
+}

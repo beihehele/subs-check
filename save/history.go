@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/beihehele/subs-check/config"
-	"github.com/beihehele/subs-check/save/method"
 	"github.com/beihehele/subs-check/utils"
 	"gopkg.in/yaml.v3"
 )
@@ -20,7 +19,7 @@ const (
 	historyTimeFormat = "2006-01-02_1504"
 )
 
-// SaveHistory 保存本次检测的节点快照，如 history/all_2026-04-07_1430.yaml
+// SaveHistory 保存本次检测的节点快照到私有 cache/history 目录。
 func SaveHistory(yamlData []byte) {
 	dir := getHistoryDir()
 	if dir == "" {
@@ -49,13 +48,6 @@ func LoadHistoryProxies() []map[string]any {
 	if err != nil {
 		return nil
 	}
-	// Read legacy public history during migration; new snapshots are private
-	// because source attribution contains subscription credentials.
-	if saver, err := method.NewLocalSaver(); err == nil {
-		legacy, _ := filepath.Glob(filepath.Join(saver.OutputPath, historyDir, historyPrefix+"*.yaml"))
-		files = append(files, legacy...)
-	}
-
 	var allProxies []map[string]any
 	for _, f := range files {
 		t, ok := parseTimeFromFilename(filepath.Base(f))

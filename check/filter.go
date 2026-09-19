@@ -33,7 +33,11 @@ func CompileFilterPatterns() []*regexp.Regexp {
 // MatchesFilter reports whether r's rendered name (without speed tag)
 // matches any pattern. An empty pattern slice counts as "passes".
 func MatchesFilter(r Result, patterns []*regexp.Regexp) bool {
-	if !matchesStructuredFilter(r) {
+	return matchesFilter(r, patterns, compileInputFilterPatterns())
+}
+
+func matchesFilter(r Result, patterns []*regexp.Regexp, input inputFilterPatterns) bool {
+	if !matchesStructuredFilter(r, input) {
 		return false
 	}
 	if len(patterns) == 0 {
@@ -63,12 +67,13 @@ func MatchesFilter(r Result, patterns []*regexp.Regexp) bool {
 // 国家+媒体标签的完整视图,同时保持 proxy["name"] 不被修改。
 func FilterResults(results []Result) []Result {
 	patterns := CompileFilterPatterns()
+	input := compileInputFilterPatterns()
 
 	slog.Info(fmt.Sprintf("应用节点过滤规则，共 %d 个正则表达式", len(patterns)))
 
 	var filtered []Result
 	for _, r := range results {
-		if MatchesFilter(r, patterns) {
+		if matchesFilter(r, patterns, input) {
 			filtered = append(filtered, r)
 		}
 	}
@@ -77,31 +82,55 @@ func FilterResults(results []Result) []Result {
 	return filtered
 }
 
+// inputFilterPatterns contains the regular expressions used by the cheap
+// name-based node filter. They are compiled once per check run and reused by
+// every worker instead of being compiled for every node.
+type inputFilterPatterns struct {
+	include *regexp.Regexp
+	exclude *regexp.Regexp
+}
+
+func compileInputFilterPatterns() inputFilterPatterns {
+	f := config.GlobalConfig.NodeFilter
+	return inputFilterPatterns{
+		include: compileInputFilterPattern(f.NameInclude, "name-include"),
+		exclude: compileInputFilterPattern(f.NameExclude, "name-exclude"),
+	}
+}
+
+func compileInputFilterPattern(pattern, field string) *regexp.Regexp {
+	if pattern == "" {
+		return nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		// Config validation rejects this before a check starts. Keep this
+		// helper fail-closed for callers that construct config in-process.
+		slog.Error(fmt.Sprintf("%s 正则表达式无效，拒绝放行: %v", field, err))
+		return regexp.MustCompile(`a\A`)
+	}
+	return re
+}
+
 // matchesInputFilter only examines cheap, original connection metadata.
-func matchesInputFilter(proxy map[string]any) bool {
+func matchesInputFilter(proxy map[string]any, patterns inputFilterPatterns) bool {
 	f := config.GlobalConfig.NodeFilter
 	typ, _ := proxy["type"].(string)
 	if len(f.Protocols) > 0 && !slices.Contains(f.Protocols, typ) {
 		return false
 	}
 	name, _ := proxy["name"].(string)
-	for _, rule := range []struct {
-		pattern string
-		include bool
-	}{{f.NameInclude, true}, {f.NameExclude, false}} {
-		if rule.pattern == "" {
-			continue
-		}
-		re, err := regexp.Compile(rule.pattern)
-		if err != nil || re.MatchString(name) != rule.include {
-			return false
-		}
+	if patterns.include != nil && !patterns.include.MatchString(name) {
+		return false
+	}
+	if patterns.exclude != nil && patterns.exclude.MatchString(name) {
+		return false
 	}
 	return true
 }
 
-func matchesStructuredFilter(r Result) bool {
-	if r.Proxy == nil || !matchesInputFilter(r.Proxy) {
+func matchesStructuredFilter(r Result, input inputFilterPatterns) bool {
+	if r.Proxy == nil || !matchesInputFilter(r.Proxy, input) {
 		return false
 	}
 	f := config.GlobalConfig.NodeFilter

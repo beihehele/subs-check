@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Subs Check 配置管理</title>
-    <link href="/static/bootstrap/bootstrap.min.css" rel="stylesheet">
-    <link href="/static/bootstrap-icons/bootstrap-icons.css" rel="stylesheet">
-    <link href="/static/monaco/vs/editor/editor.main.css" rel="stylesheet">
-    <link href="/static/css/app.css" rel="stylesheet">
+    <link href="{{.base}}/static/bootstrap/bootstrap.min.css" rel="stylesheet">
+    <link href="{{.base}}/static/bootstrap-icons/bootstrap-icons.css" rel="stylesheet">
+    <link href="{{.base}}/static/monaco/vs/editor/editor.main.css" rel="stylesheet">
+    <link href="{{.base}}/static/css/app.css" rel="stylesheet">
     <style>
         /* The dashboard fills the viewport below the top bar, so both panels share one
            height without magic offsets; the log list and editor flex into the rest. */
@@ -432,13 +432,13 @@
     </main>
 
     <!-- Bootstrap JS -->
-    <script src="/static/bootstrap/bootstrap.bundle.min.js"></script>
+    <script src="{{.base}}/static/bootstrap/bootstrap.bundle.min.js"></script>
 
     <!-- Monaco Editor -->
-    <script>var require = { paths: { 'vs': '/static/monaco/vs' } };</script>
-    <script src="/static/monaco/vs/loader.js"></script>
-    <script src="/static/monaco/vs/editor/editor.main.nls.js"></script>
-    <script src="/static/monaco/vs/editor/editor.main.js"></script>
+    <script>var require = { paths: { 'vs': '{{.base}}/static/monaco/vs' } };</script>
+    <script src="{{.base}}/static/monaco/vs/loader.js"></script>
+    <script src="{{.base}}/static/monaco/vs/editor/editor.main.nls.js"></script>
+    <script src="{{.base}}/static/monaco/vs/editor/editor.main.js"></script>
 
     <script>
         let editor;
@@ -504,7 +504,7 @@
             button.disabled = true;
             button.textContent = '验证中...';
 
-            fetch('/api/status', {
+            fetch('{{.base}}/api/status', {
                 headers: { 'X-API-Key': apiKey }
             })
             .then(response => {
@@ -609,7 +609,7 @@
 
         // 加载配置
         function loadConfig() {
-            return fetch('/api/config', {
+            return fetch('{{.base}}/api/config', {
                 headers: addApiKeyHeader()
             })
             .then(response => {
@@ -630,7 +630,7 @@
         document.getElementById('saveConfig').addEventListener('click', function() {
             const content = editor.getValue();
 
-            fetch('/api/config', {
+            fetch('{{.base}}/api/config', {
                 method: 'POST',
                 headers: addApiKeyHeader({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ content })
@@ -673,7 +673,7 @@
             icon.className = 'bi bi-arrow-repeat rotate-animation';
             button.disabled = true;
 
-            fetch('/api/force-close', {
+            fetch('{{.base}}/api/force-close', {
                 method: 'POST',
                 headers: addApiKeyHeader()
             })
@@ -700,7 +700,7 @@
             icon.className = 'bi bi-arrow-repeat rotate-animation';
             button.disabled = true;
 
-            fetch('/api/trigger-check', {
+            fetch('{{.base}}/api/trigger-check', {
                 method: 'POST',
                 headers: addApiKeyHeader()
             })
@@ -719,7 +719,7 @@
 
         // 加载日志
         function loadLogs() {
-            return fetch('/api/logs', {
+            return fetch('{{.base}}/api/logs', {
                 headers: addApiKeyHeader()
             })
             .then(response => {
@@ -845,12 +845,12 @@
         }
 
         dom.phaseSteps.addEventListener('click', function(e) {
-            if (e.target.closest('.phase-link')) window.location.href = '/admin/results';
+            if (e.target.closest('.phase-link')) window.location.href = '{{.base}}/admin/results';
         });
         dom.phaseSteps.addEventListener('keydown', function(e) {
             if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.phase-link')) {
                 e.preventDefault();
-                window.location.href = '/admin/results';
+                window.location.href = '{{.base}}/admin/results';
             }
         });
 
@@ -951,7 +951,7 @@
         }
 
         function updateStatus() {
-            fetch('/api/status', {
+            fetch('{{.base}}/api/status', {
                 headers: addApiKeyHeader()
             })
             .then(response => {
@@ -1004,7 +1004,7 @@
                 const status = Object.prototype.hasOwnProperty.call(SUB_STATUS_LABELS, item.status) ? item.status : 'never_checked';
                 const label = SUB_STATUS_LABELS[status] || status;
                 return '<tr>' +
-                    '<td class="url-cell" title="' + escapeHtml(item.url) + '">' + item.url + '</td>' +
+                    '<td class="url-cell" title="' + escapeHtml(item.url) + '">' + escapeHtml(item.url) + '</td>' +
                     '<td>' + (item.lastSuccess || 0) + '/' + (item.lastTotal || 0) + '</td>' +
                     '<td>' + (item.lastQualified || 0) + '</td>' +
                     '<td>' + (item.lastSelected || 0) + '</td>' +
@@ -1015,7 +1015,7 @@
         }
 
         function updateSubStats() {
-            fetch('/api/sub-stats', { headers: addApiKeyHeader() })
+            fetch('{{.base}}/api/sub-stats', { headers: addApiKeyHeader() })
             .then(response => {
                 if (handleUnauthorized(response, false)) return;
                 return response.json();
@@ -1052,7 +1052,7 @@
 
         // 获取版本信息
         function getVersionInfo() {
-            fetch('/api/version', {
+            fetch('{{.base}}/api/version', {
                 headers: addApiKeyHeader()
             })
             .then(response => response.json())
